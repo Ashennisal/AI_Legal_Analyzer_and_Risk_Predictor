@@ -16,7 +16,7 @@ function riskToColor(level) {
 
 const Dashboard = () => {
   const { user } = useUser();
-  const userId = user?.currentUser?.id ?? 1;
+  const userId = user?.currentUser?.id;
 
   const [loading, setLoading] = useState(true);
   const [docs, setDocs] = useState([]);

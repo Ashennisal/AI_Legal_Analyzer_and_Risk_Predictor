@@ -7,10 +7,14 @@ import json
 from datetime import datetime, timedelta
 
 from database import get_db_connection, close_db_connection
+from calendar_events_routes import router as calendar_events_router
+from calendar_events_db import try_save_extracted_events
 # Note: Ensure you still have the routers imported if you are using them in your actual file.
 # from routers import risk_engine, ocr_engine, chat_assistant, calender_sync, benchmarking
 
 app = FastAPI(title="AI Legal Analyzer API")
+
+app.include_router(calendar_events_router, prefix="/api")
 
 # Configure CORS so your React frontend can talk to this FastAPI backend
 app.add_middleware(
@@ -474,9 +478,8 @@ async def analyze_uploaded_document(
     db = Depends(get_db),
 ):
     from risk_service import detect_risks, extract_text_from_pdf
-    from calendar_service import read_docx_text, extract_events_with_gemini
-    from summarizer import summarize_document_with_gemini
-    
+    from calendar_service import read_docx_text
+
     try:
         safe_fn = (file.filename or "").lower()
         suffix = os.path.splitext(file.filename or "")[1] or ".bin"
@@ -511,9 +514,18 @@ async def analyze_uploaded_document(
         if risk_score > 30: risk_level = "Medium"
         if risk_score > 70: risk_level = "High"
         
-        # 4. Run Calendar Extraction + AI summaries (summarizer.py)
-        calendar_events = extract_events_with_gemini(text)
-        summaries = summarize_document_with_gemini(text)
+        # 4. Gemini: one combined call by default (half the quota vs summaries + calendar separately).
+        # Set GEMINI_SEPARATE_CALLS=1 in .env to use two requests instead.
+        if os.getenv("GEMINI_SEPARATE_CALLS", "").lower() in ("1", "true", "yes"):
+            from calendar_service import extract_events_with_gemini
+            from summarizer import summarize_document_with_gemini
+
+            summaries = summarize_document_with_gemini(text)
+            calendar_events = extract_events_with_gemini(text)
+        else:
+            from gemini_combined import combined_summaries_and_events
+
+            summaries, calendar_events = combined_summaries_and_events(text)
 
         analysis_payload = {
             "risk_level": risk_level,
@@ -563,15 +575,29 @@ async def analyze_uploaded_document(
             response_body["summaries"] = summaries
 
         if has_analysis_json_col:
+            try:
+                payload = json.dumps(response_body, default=str)
+            except (TypeError, ValueError) as je:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Could not serialize analysis result: {je}",
+                ) from je
             cursor.execute(
                 "UPDATE documents SET analysis_json = %s WHERE id = %s",
-                (json.dumps(response_body), document_id),
+                (payload, document_id),
             )
             db.commit()
         cursor.close()
 
+        try:
+            try_save_extracted_events(db, user_id, document_id, calendar_events)
+        except Exception as save_err:
+            print(f"⚠ try_save_extracted_events (non-fatal): {save_err}")
+
         return response_body
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -632,4 +658,6 @@ async def upload_document(file: UploadFile = File(...), user_id: int = 1, db = D
 # This must always be at the bottom!
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    # String import enables reload so route changes (e.g. calendar events) apply without a manual restart.
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

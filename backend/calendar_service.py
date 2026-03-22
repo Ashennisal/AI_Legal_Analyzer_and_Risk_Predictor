@@ -59,84 +59,27 @@ def _strip_json_fences(s: str) -> str:
     return s.strip()
 
 
-# -------------------------
-# 3) Gemini Extractor
-# -------------------------
-def extract_events_with_gemini(
-    text: str,
-    default_time: str = "09:00",
-    model: str = "gemini-2.5-flash",
-) -> List[dict]:
-    """
-    Returns:
-      [{"title":"...", "date":"YYYY-MM-DD", "time":"HH:MM"}, ...]
-    """
+def _response_text_safe(response) -> str:
+    """Avoid exceptions when the candidate is blocked or empty (SDK can raise on .text)."""
     try:
-        from google import genai
-    except ImportError:
-        raise RuntimeError(
-            "google-genai library is not installed. "
-            'Install with: pip install google-genai'
-        )
-    
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set.\n"
-            'PowerShell:  $env:GEMINI_API_KEY="YOUR_KEY"\n'
-            "Then:       python app.py"
-        )
-
-    client = genai.Client(
-        api_key=api_key,
-        http_options={"api_version": "v1"},
-    )
-
-    # reduce tokens / quota usage
-    text = text[:12000]
-
-    prompt = f"""
-Return ONLY valid JSON. Do NOT use markdown. Do NOT wrap in ```.
-
-Output format must be EXACTLY one of these:
-
-Option A:
-{{"events":[{{"title":"...","date":"YYYY-MM-DD","time":"HH:MM"}}]}}
-
-Option B:
-[{{"title":"...","date":"YYYY-MM-DD","time":"HH:MM"}}]
-
-Rules:
-- Extract explicit or strongly implied deadlines, due dates, renewals, expiries, meetings, appointments, hearings, follow-ups, admissions, tests.
-- Only include events with real dates.
-- If time missing, use "{default_time}".
-- date must be YYYY-MM-DD
-- time must be HH:MM (24-hour)
-
-DOCUMENT:
-{text}
-""".strip()
-
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-    )
-
-    raw = _strip_json_fences(response.text)
-
-    try:
-        data = json.loads(raw)
+        t = getattr(response, "text", None)
+        if t:
+            return t
     except Exception:
-        print("⚠ Model did not return valid JSON.")
-        print("Raw response:\n", response.text)
-        return []
+        pass
+    try:
+        if response.candidates:
+            parts = response.candidates[0].content.parts
+            return "".join(getattr(p, "text", "") or "" for p in parts)
+    except (AttributeError, IndexError, TypeError):
+        pass
+    return ""
 
-    # Support both shapes
-    if isinstance(data, list):
-        events_raw = data
-    else:
-        events_raw = data.get("events", [])
 
+def normalize_events_list(events_raw: List, default_time: str = "09:00") -> List[dict]:
+    """
+    Turn raw model event dicts into validated, deduplicated rows for the API.
+    """
     cleaned: List[dict] = []
     seen = set()
 
@@ -158,10 +101,108 @@ DOCUMENT:
             continue
         seen.add(key)
 
-        cleaned.append({
-        "title": title,
-        "date": iso_date,
-        "time": hhmm
-        })
-        
+        cleaned.append(
+            {
+                "title": title,
+                "date": iso_date,
+                "time": hhmm,
+            }
+        )
+
     return cleaned
+
+
+# -------------------------
+# 3) Gemini Extractor
+# -------------------------
+def extract_events_with_gemini(
+    text: str,
+    default_time: str = "09:00",
+    model: str = "gemini-2.5-flash",
+) -> List[dict]:
+    """
+    Returns:
+      [{"title":"...", "date":"YYYY-MM-DD", "time":"HH:MM"}, ...]
+    """
+    try:
+        from google import genai
+    except ImportError:
+        print("⚠ calendar: google-genai not installed; skipping calendar extraction.")
+        return []
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("⚠ calendar: GEMINI_API_KEY not set; skipping calendar extraction.")
+        return []
+
+    # reduce tokens / quota usage
+    text = text[:12000]
+
+    # Prompt rules adapted from SLIIT archive (minduli / medical-legal analyzer):
+    # explicit dates plus relative deadlines resolved to concrete ISO dates.
+    prompt = f"""
+Return ONLY valid JSON. Do NOT use markdown. Do NOT wrap in ```.
+
+Output format must be EXACTLY one of these:
+
+Option A:
+{{"events":[{{"title":"...","date":"YYYY-MM-DD","time":"HH:MM"}}]}}
+
+Option B:
+[{{"title":"...","date":"YYYY-MM-DD","time":"HH:MM"}}]
+
+Rules:
+- Extract explicit dates AND relative deadlines (e.g. contract signing, effective date, court order date).
+- Relative phrases include:
+  - within X days
+  - after X days
+  - before X days
+  - no later than X days after [reference event]
+- If a relative deadline is found:
+  1. Find the related base date in the document (e.g. submission date, decision date, effective date).
+  2. Calculate the final calendar date.
+  3. Return ONLY the computed final date in YYYY-MM-DD.
+- If no base date is available for a relative phrase, omit that event (do not guess).
+- Always return final resolved dates only (never output text like "within 30 days" as the date field).
+- Also extract explicit or strongly implied deadlines: renewals, expiries, meetings, hearings, follow-ups, admissions, tests.
+- If time missing, use "{default_time}".
+- date must be YYYY-MM-DD
+- time must be HH:MM (24-hour)
+
+DOCUMENT:
+{text}
+""".strip()
+
+    try:
+        client = genai.Client(
+            api_key=api_key,
+            http_options={"api_version": "v1"},
+        )
+
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+        )
+
+        raw = _strip_json_fences(_response_text_safe(response))
+        if not raw.strip():
+            print("⚠ calendar: empty model response; skipping calendar extraction.")
+            return []
+
+        try:
+            data = json.loads(raw)
+        except Exception:
+            print("⚠ calendar: model did not return valid JSON.")
+            print(f"   Raw (first 500 chars): {raw[:500]!r}")
+            return []
+    except Exception as e:
+        print(f"⚠ calendar extraction failed: {e}")
+        return []
+
+    # Support both shapes
+    if isinstance(data, list):
+        events_raw = data
+    else:
+        events_raw = data.get("events", [])
+
+    return normalize_events_list(events_raw, default_time=default_time)

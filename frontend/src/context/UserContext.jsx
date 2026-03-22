@@ -10,20 +10,14 @@ export const UserProvider = ({ children }) => {
   // In the future, this data will come from your backend FastAPI login endpoint.
   // For now, we set up the structure for a logged-in user with empty data.
   const [user, setUser] = useState({
-    currentUser: {
-      id: 1,
-      name: 'Nisal',
-      initials: 'NI',
-      role: 'System Admin / Tester',
-    },
+    currentUser: null,
     stats: {
       docsAnalyzed: 0,
       avgRiskScore: 'N/A',
       clausesDetected: 0,
       upcomingDeadlines: 0,
     },
-    // Empty array to start
-    recentActivity: [] 
+    recentActivity: [],
   });
 
   return (

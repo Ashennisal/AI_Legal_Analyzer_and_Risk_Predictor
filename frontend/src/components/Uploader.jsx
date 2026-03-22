@@ -6,7 +6,7 @@ import AnalysisResultView from './AnalysisResultView';
 
 const Uploader = () => {
   const { user } = useUser();
-  const userId = user?.currentUser?.id ?? 1;
+  const userId = user?.currentUser?.id;
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
