@@ -1,10 +1,10 @@
 // frontend/src/components/Dashboard.jsx
 import React, { useEffect, useState, useCallback } from 'react';
-import { FileText, AlertTriangle, TrendingUp, Calendar, UploadCloud, User, X } from 'lucide-react';
+import { FileText, AlertTriangle, TrendingUp, Calendar, UploadCloud, User } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
-import AnalysisResultView from './AnalysisResultView';
+import DocumentAnalysisModal from './DocumentAnalysisModal';
 
 const API = 'http://127.0.0.1:8000';
 
@@ -176,41 +176,14 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelected(null)}>
-          <div
-            className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto border border-gray-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex justify-between items-center">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">{selected.name}</h3>
-                <p className="text-sm text-gray-500">{selected.date}</p>
-              </div>
-              <button type="button" onClick={() => setSelected(null)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-6">
-              {selected.result || selected.snapshot ? (
-                <AnalysisResultView
-                  analysis={(selected.result || selected.snapshot).analysis}
-                  calendarEvents={(selected.result || selected.snapshot).calendar_events || []}
-                  filename={selected.name}
-                  summaries={(selected.result || selected.snapshot).summaries}
-                  showDashboardLink={false}
-                />
-              ) : (
-                <p className="text-sm text-gray-500">
-                  No saved analysis for this document. Run{' '}
-                  <code className="bg-gray-100 px-1 rounded">migrations/001_add_analysis_json.sql</code> and analyze again.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <DocumentAnalysisModal
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        title={selected?.name}
+        subtitle={selected?.date}
+        result={selected?.result}
+        snapshot={selected?.snapshot}
+      />
     </div>
   );
 };

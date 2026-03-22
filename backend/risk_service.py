@@ -93,6 +93,90 @@ def create_highlighted_docx(original_text: str, risky_sentences: list) -> io.Byt
     return file_stream
 
 
+HIGH_SIGNAL_PHRASES = [
+    "breach of contract",
+    "lawsuit",
+    "legal action",
+    "unlimited liability",
+    "gross negligence",
+    "indemnif",
+]
+
+
+def sentence_risk_level(sentence: str) -> str | None:
+    """
+    Per-sentence severity for UI highlighting: 'high', 'medium', 'low', or None.
+    Uses phrase lists plus VADER compound (on original casing for sentiment).
+    """
+    _ensure_nlp()
+    sl = sentence.lower()
+    for phrase in HIGH_SIGNAL_PHRASES:
+        if phrase in sl:
+            return "high"
+    score = _analyzer.polarity_scores(sentence)["compound"]
+    if score < -0.52:
+        return "high"
+    for phrase in RISK_PHRASES:
+        if phrase in sl:
+            return "medium"
+    if score < -0.38:
+        return "medium"
+    if score < -0.2:
+        return "low"
+    return None
+
+
+def _find_sentence_span(text: str, sent: str, start: int) -> tuple[int, int] | None:
+    for candidate in (sent, sent.strip()):
+        if not candidate:
+            continue
+        pos = text.find(candidate, start)
+        if pos != -1:
+            return pos, pos + len(candidate)
+    return None
+
+
+def _merge_adjacent_same_level(segments: list[dict]) -> list[dict]:
+    if not segments:
+        return []
+    merged = [{"text": segments[0]["text"], "level": segments[0]["level"]}]
+    for seg in segments[1:]:
+        if seg["level"] == merged[-1]["level"]:
+            merged[-1]["text"] += seg["text"]
+        else:
+            merged.append({"text": seg["text"], "level": seg["level"]})
+    return merged
+
+
+def build_risk_segments(text: str) -> list[dict]:
+    """
+    Ordered segments covering the full document text for client-side highlighting.
+    Each item: {"text": str, "level": None | 'low' | 'medium' | 'high'}.
+    """
+    _ensure_nlp()
+    if not text:
+        return []
+    sents = _sent_tokenize(text)
+    out: list[dict] = []
+    i = 0
+    n = len(text)
+    for sent in sents:
+        if not sent.strip():
+            continue
+        span = _find_sentence_span(text, sent, i)
+        if span is None:
+            continue
+        pos, end = span
+        if pos > i:
+            out.append({"text": text[i:pos], "level": None})
+        level = sentence_risk_level(sent)
+        out.append({"text": text[pos:end], "level": level})
+        i = end
+    if i < n:
+        out.append({"text": text[i:n], "level": None})
+    return _merge_adjacent_same_level(out)
+
+
 def detect_risks(text: str):
     """Returns (risky_sentences, risky_phrases) for main.analyze_uploaded_document."""
     result = analyze_document_risk(text)

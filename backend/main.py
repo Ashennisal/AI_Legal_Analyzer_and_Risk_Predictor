@@ -482,7 +482,7 @@ async def analyze_uploaded_document(
     user_id: int = Form(1),
     db = Depends(get_db),
 ):
-    from risk_service import detect_risks, extract_text_from_pdf
+    from risk_service import build_risk_segments, detect_risks, extract_text_from_pdf
     from calendar_service import read_docx_text
 
     try:
@@ -537,6 +537,7 @@ async def analyze_uploaded_document(
             "risk_score": risk_score,
             "clauses_detected": clauses_detected,
             "risky_phrases": risky_phrases,
+            "risk_segments": risk_segments,
         }
 
         fname = file.filename or "upload"
@@ -597,11 +598,6 @@ async def analyze_uploaded_document(
         except Exception as save_err:
             print(f"⚠ try_save_extracted_events (non-fatal): {save_err}")
         cursor.close()
-
-        try:
-            try_save_extracted_events(db, user_id, document_id, calendar_events)
-        except Exception as save_err:
-            print(f"⚠ try_save_extracted_events (non-fatal): {save_err}")
 
         return response_body
 
