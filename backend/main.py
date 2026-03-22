@@ -181,6 +181,24 @@ def get_platform_analytics(db = Depends(get_db)):
             { "name": 'Non-Compete', "count": int(total_clauses * 0.05) or 5 }
         ]
 
+        risk_colors = {"Low": "#22c55e", "Medium": "#eab308", "High": "#ef4444"}
+        cursor.execute(
+            """
+            SELECT risk_level, COUNT(*) AS cnt FROM documents
+            WHERE risk_level IS NOT NULL AND risk_level != ''
+            GROUP BY risk_level
+            """
+        )
+        risk_rows = cursor.fetchall()
+        by_level = {row["risk_level"]: row["cnt"] for row in risk_rows}
+        risk_data = []
+        for level in ("Low", "Medium", "High"):
+            risk_data.append({
+                "name": level,
+                "value": int(by_level.get(level, 0)),
+                "color": risk_colors[level],
+            })
+
         cursor.close()
         return {
             "timelineData": timeline_data,
