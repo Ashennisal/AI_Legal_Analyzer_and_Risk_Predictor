@@ -474,7 +474,8 @@ async def analyze_uploaded_document(
     db = Depends(get_db),
 ):
     from risk_service import detect_risks, extract_text_from_pdf
-    from calendar_service import read_docx_text, extract_events_with_gemini, summarize_document_with_gemini
+    from calendar_service import read_docx_text, extract_events_with_gemini
+    from summarizer import summarize_document_with_gemini
     
     try:
         safe_fn = (file.filename or "").lower()
@@ -510,7 +511,7 @@ async def analyze_uploaded_document(
         if risk_score > 30: risk_level = "Medium"
         if risk_score > 70: risk_level = "High"
         
-        # 4. Run Calendar Extraction + AI summaries (same Gemini setup as calendar_service)
+        # 4. Run Calendar Extraction + AI summaries (summarizer.py)
         calendar_events = extract_events_with_gemini(text)
         summaries = summarize_document_with_gemini(text)
 
