@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, FileText, X, AlertCircle, CheckCircle, Loader2, Calendar, ShieldAlert } from 'lucide-react';
+import { UploadCloud, FileText, X, AlertCircle, CheckCircle, Loader2, Calendar, ShieldAlert, BookOpen } from 'lucide-react';
 import axios from 'axios';
 
 const Uploader = () => {
@@ -8,9 +8,11 @@ const Uploader = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null); // 'success' or 'error'
   
-  // NEW: State to hold the results from the AI
   const [analysisData, setAnalysisData] = useState(null);
   const [calendarEvents, setCalendarEvents] = useState([]);
+  const [summaries, setSummaries] = useState(null);
+  const [summaryTab, setSummaryTab] = useState('technical');
+  const [pdfTextSource, setPdfTextSource] = useState(null);
 
   const fileInputRef = useRef(null);
 
@@ -44,8 +46,11 @@ const Uploader = () => {
     if (validTypes.includes(selectedFile.type)) {
       setFile(selectedFile);
       setUploadStatus(null);
-      setAnalysisData(null); // Reset previous results
+      setAnalysisData(null);
       setCalendarEvents([]);
+      setSummaries(null);
+      setPdfTextSource(null);
+      setSummaryTab('technical');
     } else {
       alert("Invalid file type. Please upload a PDF or DOCX file.");
     }
@@ -55,6 +60,10 @@ const Uploader = () => {
     setFile(null);
     setUploadStatus(null);
     setAnalysisData(null);
+    setCalendarEvents([]);
+    setSummaries(null);
+    setPdfTextSource(null);
+    setSummaryTab('technical');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -75,9 +84,11 @@ const Uploader = () => {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      // Success! Save the data to display it
       setAnalysisData(response.data.analysis);
-      setCalendarEvents(response.data.calendar_events);
+      setCalendarEvents(response.data.calendar_events || []);
+      setSummaries(response.data.summaries || null);
+      setPdfTextSource(response.data.pdf_text_source ?? null);
+      setSummaryTab('technical');
       setUploadStatus('success');
 
     } catch (error) {
@@ -186,10 +197,48 @@ const Uploader = () => {
                 <div>
                   <h3 className="text-lg font-bold text-slate-800">Analysis Complete</h3>
                   <p className="text-sm text-gray-500">{file.name}</p>
+                  {pdfTextSource && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      PDF text extracted via <span className="font-semibold text-slate-500">{pdfTextSource === 'ocr' ? 'OCR' : 'embedded text'}</span>
+                    </p>
+                  )}
                 </div>
               </div>
               <button onClick={removeFile} className="text-sm font-bold text-blue-600 hover:text-blue-700">Upload Another</button>
             </div>
+
+            {summaries && (
+              <div className="bg-gradient-to-br from-slate-50 to-blue-50/30 p-6 rounded-xl border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
+                  <BookOpen className="w-5 h-5 text-blue-600" />
+                  AI summaries
+                </div>
+                <p className="text-xs text-slate-500 mb-3">Gemini-generated views of your document (technical, plain language, and action items).</p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {[
+                    { id: 'technical', label: 'Technical' },
+                    { id: 'layman', label: 'Layman' },
+                    { id: 'actionable', label: 'Actionable' },
+                  ].map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setSummaryTab(id)}
+                      className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                        summaryTab === id
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="bg-white p-4 rounded-lg border border-slate-200 text-sm text-slate-700 whitespace-pre-wrap max-h-[28rem] overflow-y-auto leading-relaxed">
+                  {summaries[summaryTab] || '—'}
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Risk Results */}

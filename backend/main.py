@@ -333,31 +333,44 @@ async def analyze_uploaded_document(
     user_id: int = 1, # Default user ID for testing
     db = Depends(get_db)
 ):
-    from risk_service import detect_risks, extract_text_from_pdf
+    from risk_service import detect_risks
     from calendar_service import read_docx_text, extract_events_with_gemini
-    
+    from document_pipeline import extract_pdf_text_with_fallback, summarize_text_all_styles
+
     try:
+        safe_name = (file.filename or "upload").lower()
+        suffix = os.path.splitext(file.filename or "")[1] or ".bin"
+
         # 1. Save file temporarily so the docx/pdf libraries can read it
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             content = await file.read()
             temp_file.write(content)
             temp_file_path = temp_file.name
 
-        # 2. Extract Text based on file type
+        # 2. Extract text (PDF: OCR first, then PyPDF2 fallback; DOCX: structured text)
         text = ""
-        if file.filename.lower().endswith(".docx"):
+        pdf_text_source = None
+        if safe_name.endswith(".docx"):
             text = read_docx_text(temp_file_path)
-        elif file.filename.lower().endswith(".pdf"):
-            with open(temp_file_path, "rb") as f:
-                text = extract_text_from_pdf(f)
+        elif safe_name.endswith(".pdf"):
+            text, pdf_text_source = extract_pdf_text_with_fallback(temp_file_path)
         else:
             os.remove(temp_file_path)
             raise HTTPException(status_code=400, detail="Only .docx and .pdf files are supported")
 
         os.remove(temp_file_path)
 
-        # 3. Run Risk Analysis
-        from risk_service import detect_risks
+        # 3. Primary pipeline: Gemini multi-style summaries (test.py flow)
+        try:
+            summaries = summarize_text_all_styles(text)
+        except Exception as sum_err:
+            summaries = {
+                "technical": f"Summaries could not be generated: {sum_err}",
+                "layman": "",
+                "actionable": "",
+            }
+
+        # 4. Run Risk Analysis
         risky_sentences, risky_phrases = detect_risks(text)
         clauses_detected = len(risky_sentences)
         
@@ -367,34 +380,41 @@ async def analyze_uploaded_document(
         if risk_score > 30: risk_level = "Medium"
         if risk_score > 70: risk_level = "High"
         
-        # 4. Run Calendar Extraction
-        calendar_events = extract_events_with_gemini(text)
+        # 5. Run Calendar Extraction (non-fatal if Gemini fails)
+        try:
+            calendar_events = extract_events_with_gemini(text)
+        except Exception:
+            calendar_events = []
 
-        # 5. Save Analysis to MySQL Database
+        # 6. Save Analysis to MySQL Database
         cursor = db.cursor()
         sql = """
             INSERT INTO documents (user_id, filename, risk_level, clauses_detected) 
             VALUES (%s, %s, %s, %s)
         """
-        cursor.execute(sql, (user_id, file.filename, risk_level, clauses_detected))
+        cursor.execute(sql, (user_id, file.filename or "upload", risk_level, clauses_detected))
         db.commit()
         document_id = cursor.lastrowid
         cursor.close()
 
-        # 6. Return the combined data to React
-        return {
+        # 7. Return the combined data to React
+        payload = {
             "status": "success",
             "message": "Analysis Complete",
             "document_id": document_id,
-            "filename": file.filename,
+            "filename": file.filename or "upload",
+            "summaries": summaries,
             "analysis": {
                 "risk_level": risk_level,
                 "risk_score": risk_score,
                 "clauses_detected": clauses_detected,
                 "risky_phrases": risky_phrases
             },
-            "calendar_events": calendar_events
+            "calendar_events": calendar_events,
         }
+        if pdf_text_source is not None:
+            payload["pdf_text_source"] = pdf_text_source
+        return payload
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
