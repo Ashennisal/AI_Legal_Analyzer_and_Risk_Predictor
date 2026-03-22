@@ -19,8 +19,6 @@ from calendar_events_db import try_save_extracted_events
 app = FastAPI(title="AI Legal Analyzer API")
 app.include_router(calendar_events_router, prefix="/api")
 
-app.include_router(calendar_events_router, prefix="/api")
-
 # Configure CORS so your React frontend can talk to this FastAPI backend
 app.add_middleware(
     CORSMiddleware,
