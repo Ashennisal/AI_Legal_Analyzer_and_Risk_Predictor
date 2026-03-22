@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import tempfile
 import os
+import json
 from datetime import datetime, timedelta
 
 from database import get_db_connection, close_db_connection
@@ -325,29 +326,171 @@ async def extract_calendar_events(file: UploadFile = File(...)):
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
+# --- User documents (dashboard) ---
+
+def _normalize_stored_analysis_payload(parsed):
+    """
+    Stored JSON should match POST /api/documents/analyze response body (what the UI shows after upload).
+    Legacy rows only had { analysis, calendar_events } — normalize to the same shape.
+    """
+    if not parsed:
+        return None
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if (
+        isinstance(parsed, dict)
+        and parsed.get("status") == "success"
+        and "analysis" in parsed
+        and "calendar_events" in parsed
+    ):
+        return parsed
+    if isinstance(parsed, dict) and "analysis" in parsed and "calendar_events" in parsed:
+        return {
+            "status": "success",
+            "message": "Analysis Complete",
+            "document_id": parsed.get("document_id"),
+            "filename": parsed.get("filename"),
+            "analysis": parsed["analysis"],
+            "calendar_events": parsed.get("calendar_events") or [],
+            "summaries": parsed.get("summaries"),
+            "pdf_text_source": parsed.get("pdf_text_source"),
+        }
+    return None
+
+
+def _rows_to_document_list(rows, include_json_column: bool):
+    out = []
+    for r in rows:
+        item = dict(r)
+        raw = None
+        if include_json_column:
+            raw = item.pop("analysis_json", None)
+        result = _normalize_stored_analysis_payload(
+            json.loads(raw) if raw else None
+        )
+        if result:
+            if result.get("document_id") is None:
+                result["document_id"] = item.get("id")
+            if not result.get("filename") and item.get("filename"):
+                result["filename"] = item["filename"]
+        item["result"] = result
+        item["snapshot"] = result
+        if item.get("uploaded_at") and hasattr(item["uploaded_at"], "isoformat"):
+            item["uploaded_at"] = item["uploaded_at"].isoformat()
+        elif item.get("uploaded_at"):
+            item["uploaded_at"] = str(item["uploaded_at"])
+        out.append(item)
+    return out
+
+
+@app.get("/api/documents/my")
+def get_my_documents(user_id: int = 1, db = Depends(get_db)):
+    """Recent analyses for a user (dashboard). Run migrations/001_add_analysis_json.sql for full saved snapshots."""
+    try:
+        cursor = db.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                """
+                SELECT id, filename, risk_level, clauses_detected, uploaded_at, analysis_json
+                FROM documents
+                WHERE user_id = %s
+                ORDER BY COALESCE(uploaded_at, id) DESC, id DESC
+                LIMIT 100
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+            include_json = True
+        except Exception:
+            cursor.execute(
+                """
+                SELECT id, filename, risk_level, clauses_detected, uploaded_at
+                FROM documents
+                WHERE user_id = %s
+                ORDER BY COALESCE(uploaded_at, id) DESC, id DESC
+                LIMIT 100
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+            include_json = False
+        cursor.close()
+        return {"documents": _rows_to_document_list(rows, include_json)}
+    except Exception as e:
+        print(f"get_my_documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/documents/{document_id}")
+def get_document_by_id(document_id: int, user_id: int = 1, db = Depends(get_db)):
+    """Single saved analysis (must belong to user_id)."""
+    try:
+        cursor = db.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                """
+                SELECT id, filename, risk_level, clauses_detected, uploaded_at, analysis_json
+                FROM documents
+                WHERE id = %s AND user_id = %s
+                LIMIT 1
+                """,
+                (document_id, user_id),
+            )
+        except Exception:
+            cursor.execute(
+                """
+                SELECT id, filename, risk_level, clauses_detected, uploaded_at
+                FROM documents
+                WHERE id = %s AND user_id = %s
+                LIMIT 1
+                """,
+                (document_id, user_id),
+            )
+        row = cursor.fetchone()
+        cursor.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+        raw = row.pop("analysis_json", None)
+        parsed = json.loads(raw) if raw else None
+        result = _normalize_stored_analysis_payload(parsed)
+        if row.get("uploaded_at") and hasattr(row["uploaded_at"], "isoformat"):
+            row["uploaded_at"] = row["uploaded_at"].isoformat()
+        return {"document": row, "result": result, "snapshot": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- Document Analysis Endpoint (Combines Risk & Calendar logic) ---
 
 @app.post("/api/documents/analyze")
 async def analyze_uploaded_document(
-    file: UploadFile = File(...), 
-    user_id: int = 1, # Default user ID for testing
-    db = Depends(get_db)
+    file: UploadFile = File(...),
+    user_id: int = Form(1),
+    db = Depends(get_db),
 ):
     from risk_service import detect_risks, extract_text_from_pdf
-    from calendar_service import read_docx_text, extract_events_with_gemini
+    from calendar_service import read_docx_text, extract_events_with_gemini, summarize_document_with_gemini
     
     try:
+        safe_fn = (file.filename or "").lower()
+        suffix = os.path.splitext(file.filename or "")[1] or ".bin"
+
         # 1. Save file temporarily so the docx/pdf libraries can read it
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             content = await file.read()
             temp_file.write(content)
             temp_file_path = temp_file.name
 
         # 2. Extract Text based on file type
         text = ""
-        if file.filename.lower().endswith(".docx"):
+        if safe_fn.endswith(".docx"):
             text = read_docx_text(temp_file_path)
-        elif file.filename.lower().endswith(".pdf"):
+        elif safe_fn.endswith(".pdf"):
             with open(temp_file_path, "rb") as f:
                 text = extract_text_from_pdf(f)
         else:
@@ -367,34 +510,66 @@ async def analyze_uploaded_document(
         if risk_score > 30: risk_level = "Medium"
         if risk_score > 70: risk_level = "High"
         
-        # 4. Run Calendar Extraction
+        # 4. Run Calendar Extraction + AI summaries (same Gemini setup as calendar_service)
         calendar_events = extract_events_with_gemini(text)
+        summaries = summarize_document_with_gemini(text)
 
-        # 5. Save Analysis to MySQL Database
+        analysis_payload = {
+            "risk_level": risk_level,
+            "risk_score": risk_score,
+            "clauses_detected": clauses_detected,
+            "risky_phrases": risky_phrases,
+        }
+
+        fname = file.filename or "upload"
         cursor = db.cursor()
-        sql = """
-            INSERT INTO documents (user_id, filename, risk_level, clauses_detected) 
-            VALUES (%s, %s, %s, %s)
-        """
-        cursor.execute(sql, (user_id, file.filename, risk_level, clauses_detected))
+        has_analysis_json_col = True
+        try:
+            cursor.execute(
+                """
+                INSERT INTO documents (user_id, filename, risk_level, clauses_detected, analysis_json, uploaded_at)
+                VALUES (%s, %s, %s, %s, NULL, %s)
+                """,
+                (user_id, fname, risk_level, clauses_detected, datetime.now()),
+            )
+        except Exception as db_err:
+            err_s = str(db_err).lower()
+            if "analysis_json" in err_s or "unknown column" in err_s:
+                has_analysis_json_col = False
+                cursor.execute(
+                    """
+                    INSERT INTO documents (user_id, filename, risk_level, clauses_detected, uploaded_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (user_id, fname, risk_level, clauses_detected, datetime.now()),
+                )
+            else:
+                raise
         db.commit()
         document_id = cursor.lastrowid
-        cursor.close()
 
-        # 6. Return the combined data to React
-        return {
+        response_body = {
             "status": "success",
             "message": "Analysis Complete",
             "document_id": document_id,
-            "filename": file.filename,
-            "analysis": {
-                "risk_level": risk_level,
-                "risk_score": risk_score,
-                "clauses_detected": clauses_detected,
-                "risky_phrases": risky_phrases
-            },
-            "calendar_events": calendar_events
+            "filename": fname,
+            "analysis": analysis_payload,
+            "calendar_events": calendar_events,
         }
+        if summaries and any(
+            (str(v).strip() for v in summaries.values() if v is not None)
+        ):
+            response_body["summaries"] = summaries
+
+        if has_analysis_json_col:
+            cursor.execute(
+                "UPDATE documents SET analysis_json = %s WHERE id = %s",
+                (json.dumps(response_body), document_id),
+            )
+            db.commit()
+        cursor.close()
+
+        return response_body
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

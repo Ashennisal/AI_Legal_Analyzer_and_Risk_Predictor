@@ -11,9 +11,10 @@ export const UserProvider = ({ children }) => {
   // For now, we set up the structure for a logged-in user with empty data.
   const [user, setUser] = useState({
     currentUser: {
-      name: 'Nisal', // We can change this to whoever is currently logged in later
+      id: 1,
+      name: 'Nisal',
       initials: 'NI',
-      role: 'System Admin / Tester', // Matching your role in the project
+      role: 'System Admin / Tester',
     },
     stats: {
       docsAnalyzed: 0,

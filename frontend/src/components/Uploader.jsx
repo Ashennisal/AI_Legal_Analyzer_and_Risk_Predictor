@@ -1,16 +1,19 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, FileText, X, AlertCircle, CheckCircle, Loader2, Calendar, ShieldAlert } from 'lucide-react';
+import { UploadCloud, FileText, X, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import axios from 'axios';
+import { useUser } from '../context/UserContext';
+import AnalysisResultView from './AnalysisResultView';
 
 const Uploader = () => {
+  const { user } = useUser();
+  const userId = user?.currentUser?.id ?? 1;
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null); // 'success' or 'error'
   
-  // NEW: State to hold the results from the AI
-  const [analysisData, setAnalysisData] = useState(null);
-  const [calendarEvents, setCalendarEvents] = useState([]);
+  /** Same shape as POST /api/documents/analyze JSON (persisted as analysis_json). */
+  const [analyzeResult, setAnalyzeResult] = useState(null);
 
   const fileInputRef = useRef(null);
 
@@ -44,8 +47,7 @@ const Uploader = () => {
     if (validTypes.includes(selectedFile.type)) {
       setFile(selectedFile);
       setUploadStatus(null);
-      setAnalysisData(null); // Reset previous results
-      setCalendarEvents([]);
+      setAnalyzeResult(null);
     } else {
       alert("Invalid file type. Please upload a PDF or DOCX file.");
     }
@@ -54,7 +56,7 @@ const Uploader = () => {
   const removeFile = () => {
     setFile(null);
     setUploadStatus(null);
-    setAnalysisData(null);
+    setAnalyzeResult(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -68,16 +70,14 @@ const Uploader = () => {
     // Package the file to send to FastAPI
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('user_id', 1); // Mock user ID for now
+    formData.append('user_id', String(userId));
 
     try {
       const response = await axios.post('http://127.0.0.1:8000/api/documents/analyze', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      // Success! Save the data to display it
-      setAnalysisData(response.data.analysis);
-      setCalendarEvents(response.data.calendar_events);
+      setAnalyzeResult(response.data);
       setUploadStatus('success');
 
     } catch (error) {
@@ -191,54 +191,15 @@ const Uploader = () => {
               <button onClick={removeFile} className="text-sm font-bold text-blue-600 hover:text-blue-700">Upload Another</button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Risk Results */}
-              <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
-                <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
-                  <ShieldAlert className="w-5 h-5 text-red-500" /> Risk Assessment
-                </div>
-                
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-sm text-slate-500 font-medium">Risk Level</p>
-                    <p className={`text-xl font-black ${
-                      analysisData?.risk_level === 'High' ? 'text-red-600' : 
-                      analysisData?.risk_level === 'Medium' ? 'text-yellow-600' : 'text-green-600'
-                    }`}>
-                      {analysisData?.risk_level || "Unknown"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500 font-medium">Risk Score</p>
-                    <p className="text-lg font-bold text-slate-800">{analysisData?.risk_score || 0} / 100</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500 font-medium">Risky Clauses Detected</p>
-                    <p className="text-lg font-bold text-slate-800">{analysisData?.clauses_detected || 0}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Calendar Results */}
-              <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
-                <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
-                  <Calendar className="w-5 h-5 text-purple-500" /> Extracted Deadlines
-                </div>
-                
-                {calendarEvents && calendarEvents.length > 0 ? (
-                  <ul className="space-y-3">
-                    {calendarEvents.map((event, idx) => (
-                      <li key={idx} className="bg-white p-3 rounded border border-slate-200 shadow-sm flex flex-col">
-                        <span className="font-bold text-sm text-slate-800">{event.title}</span>
-                        <span className="text-xs text-slate-500 mt-1">{event.date} at {event.time}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-slate-500 italic">No dates or deadlines detected in this document.</p>
-                )}
-              </div>
-            </div>
+            {analyzeResult && (
+              <AnalysisResultView
+                analysis={analyzeResult.analysis}
+                calendarEvents={analyzeResult.calendar_events}
+                filename={analyzeResult.filename || file.name}
+                summaries={analyzeResult.summaries}
+                showDashboardLink
+              />
+            )}
           </div>
         )}
 

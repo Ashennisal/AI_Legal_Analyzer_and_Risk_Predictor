@@ -1,15 +1,68 @@
 // frontend/src/components/Dashboard.jsx
-import React from 'react';
-import { FileText, AlertTriangle, TrendingUp, Calendar, UploadCloud, User } from 'lucide-react';
-import { useUser } from '../context/UserContext'; // Import hook
+import React, { useEffect, useState, useCallback } from 'react';
+import { FileText, AlertTriangle, TrendingUp, Calendar, UploadCloud, User, X } from 'lucide-react';
+import { useUser } from '../context/UserContext';
 import { Link } from 'react-router-dom';
+import axios from 'axios';
+import AnalysisResultView from './AnalysisResultView';
+
+const API = 'http://127.0.0.1:8000';
+
+function riskToColor(level) {
+  if (level === 'High') return 'text-red-600 bg-red-50 border-red-100';
+  if (level === 'Medium') return 'text-yellow-700 bg-yellow-50 border-yellow-100';
+  return 'text-green-600 bg-green-50 border-green-100';
+}
 
 const Dashboard = () => {
-  // Grab user data from context
   const { user } = useUser();
-  const { stats, recentActivity } = user;
+  const userId = user?.currentUser?.id ?? 1;
 
-  // Dynamic stats array based on context data
+  const [loading, setLoading] = useState(true);
+  const [docs, setDocs] = useState([]);
+  const [stats, setStats] = useState({
+    docsAnalyzed: 0,
+    avgRiskScore: 'N/A',
+    clausesDetected: 0,
+    upcomingDeadlines: 0,
+  });
+  const [selected, setSelected] = useState(null);
+
+  const loadDocuments = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await axios.get(`${API}/api/documents/my`, {
+        params: { user_id: userId },
+      });
+      const list = data.documents || [];
+      setDocs(list);
+
+      const scores = list
+        .map((d) => d.result?.analysis?.risk_score ?? d.snapshot?.analysis?.risk_score)
+        .filter((x) => typeof x === 'number');
+      const avgRiskScore = scores.length
+        ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+        : 'N/A';
+      const clausesDetected = list.reduce((s, d) => s + (d.clauses_detected || 0), 0);
+
+      setStats({
+        docsAnalyzed: list.length,
+        avgRiskScore,
+        clausesDetected,
+        upcomingDeadlines: 0,
+      });
+    } catch (e) {
+      console.error('Failed to load documents', e);
+      setDocs([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    loadDocuments();
+  }, [loadDocuments]);
+
   const dynamicStats = [
     { title: 'DOCUMENTS ANALYZED', value: stats.docsAnalyzed, icon: FileText, iconColor: 'text-blue-500', bgColor: 'bg-blue-50' },
     { title: 'AVG RISK SCORE', value: stats.avgRiskScore, icon: AlertTriangle, iconColor: 'text-yellow-500', bgColor: 'bg-yellow-50' },
@@ -17,16 +70,29 @@ const Dashboard = () => {
     { title: 'UPCOMING DEADLINES', value: stats.upcomingDeadlines, icon: Calendar, iconColor: 'text-blue-500', bgColor: 'bg-blue-50' },
   ];
 
+  const recentActivity = docs.map((d) => ({
+    id: d.id,
+    name: d.filename,
+    date: d.uploaded_at
+      ? new Date(d.uploaded_at).toLocaleString()
+      : '',
+    risk: d.risk_level,
+    riskColor: riskToColor(d.risk_level),
+    result: d.result ?? d.snapshot,
+    snapshot: d.snapshot,
+  }));
+
+  const openDetail = (row) => {
+    setSelected(row);
+  };
+
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-fade-in text-gray-800">
-      
-      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Document Analysis Dashboard</h1>
         <p className="text-gray-500 mt-1">Overview of your document analysis activity and quick actions.</p>
       </div>
 
-      {/* Stats Grid - NOW DYNAMIC */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {dynamicStats.map((stat, index) => {
           const Icon = stat.icon;
@@ -44,7 +110,6 @@ const Dashboard = () => {
         })}
       </div>
 
-      {/* Quick Actions - Added Links */}
       <div className="bg-white p-8 rounded-xl border border-gray-200 shadow-sm">
         <h2 className="text-lg font-bold mb-4 text-slate-800">Quick Actions</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -63,46 +128,89 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Recent Activity - NOW DYNAMIC WITH EMPTY STATE */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="text-lg font-bold text-slate-800">Recent Activity</h2>
-          {recentActivity.length > 0 && (
-             <button className="text-blue-600 text-sm font-medium hover:text-blue-800 flex items-center gap-1">
-               View All &rarr;
-             </button>
-          )}
+          <h2 className="text-lg font-bold text-slate-800">Recent analyses</h2>
+          <button
+            type="button"
+            onClick={() => loadDocuments()}
+            className="text-blue-600 text-sm font-medium hover:text-blue-800"
+          >
+            Refresh
+          </button>
         </div>
         <div className="divide-y divide-gray-100">
-          {/* Conditional rendering: Show activity if it exists, otherwise show empty state message */}
-          {recentActivity.length > 0 ? (
-            recentActivity.map((doc, index) => (
-            <div key={index} className="p-4 px-6 flex items-center justify-between hover:bg-gray-50 transition-colors cursor-pointer">
-              <div className="flex items-center gap-4">
-                <div className="p-2 bg-gray-100 rounded-lg text-gray-500">
-                  <FileText className="w-5 h-5" />
+          {loading ? (
+            <div className="p-8 text-center text-gray-500">Loading…</div>
+          ) : recentActivity.length > 0 ? (
+            recentActivity.map((doc) => (
+              <button
+                key={doc.id}
+                type="button"
+                onClick={() => openDetail(doc)}
+                className="w-full p-4 px-6 flex items-center justify-between hover:bg-gray-50 transition-colors text-left"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-gray-100 rounded-lg text-gray-500">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-800">{doc.name}</p>
+                    <p className="text-sm text-gray-500">{doc.date}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-semibold text-slate-800">{doc.name}</p>
-                  <p className="text-sm text-gray-500">{doc.date}</p>
-                </div>
-              </div>
-              <span className={`px-3 py-1 text-xs font-bold border rounded-full ${doc.riskColor}`}>
-                {doc.risk}
-              </span>
-            </div>
-          ))
+                <span className={`px-3 py-1 text-xs font-bold border rounded-full ${doc.riskColor}`}>
+                  {doc.risk}
+                </span>
+              </button>
+            ))
           ) : (
-            // Empty state message
             <div className="p-8 text-center text-gray-500 flex flex-col items-center justify-center gap-2">
-                <FileText className="w-10 h-10 text-gray-300"/>
-                <p>No documents analyzed yet.</p>
-                <Link to="/upload" className="text-blue-500 text-sm hover:underline">Upload your first document</Link>
+              <FileText className="w-10 h-10 text-gray-300" />
+              <p>No documents analyzed yet.</p>
+              <Link to="/upload" className="text-blue-500 text-sm hover:underline">
+                Upload your first document
+              </Link>
             </div>
           )}
         </div>
       </div>
 
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelected(null)}>
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto border border-gray-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">{selected.name}</h3>
+                <p className="text-sm text-gray-500">{selected.date}</p>
+              </div>
+              <button type="button" onClick={() => setSelected(null)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {selected.result || selected.snapshot ? (
+                <AnalysisResultView
+                  analysis={(selected.result || selected.snapshot).analysis}
+                  calendarEvents={(selected.result || selected.snapshot).calendar_events || []}
+                  filename={selected.name}
+                  summaries={(selected.result || selected.snapshot).summaries}
+                  showDashboardLink={false}
+                />
+              ) : (
+                <p className="text-sm text-gray-500">
+                  No saved analysis for this document. Run{' '}
+                  <code className="bg-gray-100 px-1 rounded">migrations/001_add_analysis_json.sql</code> and analyze again.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
