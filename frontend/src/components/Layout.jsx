@@ -1,16 +1,24 @@
 import React from 'react';
 import { Shield, LayoutDashboard, UploadCloud, Calendar, User as UserIcon, LogOut, Bell, Users, BarChart2, FileText, Settings } from 'lucide-react';
-import { useLocation, Link, useNavigate } from 'react-router-dom';
+import { useLocation, Link, useNavigate, Navigate } from 'react-router-dom';
 import { useUser } from '../context/UserContext.jsx';
 import ChatAssistant from './ChatAssistant.jsx'; // <-- Correctly importing the Chat Assistant
 
 const Layout = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, setUser } = useUser(); 
+  const { user, setUser } = useUser();
   const { currentUser } = user;
 
-  const isAdmin = currentUser.role.includes('Admin');
+  if (!currentUser) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // Only real admin roles from login — do not use .includes('Admin') or phrases like
+  // "System Admin / Tester" would incorrectly open the admin portal.
+  const isAdmin =
+    currentUser.role === 'Admin' ||
+    currentUser.role === 'Super Admin';
 
   // Navigation for Normal Users
   const userNavItems = [

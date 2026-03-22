@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -6,13 +9,15 @@ import os
 import json
 from datetime import datetime, timedelta
 
+# Load backend/.env before any route uses os.getenv (GEMINI_API_KEY, MySQL, etc.)
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 from database import get_db_connection, close_db_connection
 from calendar_events_routes import router as calendar_events_router
 from calendar_events_db import try_save_extracted_events
-# Note: Ensure you still have the routers imported if you are using them in your actual file.
-# from routers import risk_engine, ocr_engine, chat_assistant, calender_sync, benchmarking
 
 app = FastAPI(title="AI Legal Analyzer API")
+app.include_router(calendar_events_router, prefix="/api")
 
 app.include_router(calendar_events_router, prefix="/api")
 
@@ -587,6 +592,10 @@ async def analyze_uploaded_document(
                 (payload, document_id),
             )
             db.commit()
+        try:
+            try_save_extracted_events(db, user_id, document_id, calendar_events)
+        except Exception as save_err:
+            print(f"⚠ try_save_extracted_events (non-fatal): {save_err}")
         cursor.close()
 
         try:
@@ -659,5 +668,4 @@ async def upload_document(file: UploadFile = File(...), user_id: int = 1, db = D
 if __name__ == "__main__":
     import uvicorn
 
-    # String import enables reload so route changes (e.g. calendar events) apply without a manual restart.
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

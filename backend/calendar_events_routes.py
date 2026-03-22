@@ -1,7 +1,4 @@
-"""
-Calendar Events REST API + Google Calendar sync (from SLIIT archive server.py).
-Requires: migrations/002_create_events_table.sql, token.json from google_oauth_setup.py
-"""
+"""REST API for Events + Google Calendar sync."""
 from __future__ import annotations
 
 import datetime
@@ -75,8 +72,6 @@ class StatusUpdate(BaseModel):
 
 
 class EventCreate(BaseModel):
-    """Create a draft deadline before Google Calendar sync."""
-
     title: str
     event_date: str
     event_time: str = "09:00"

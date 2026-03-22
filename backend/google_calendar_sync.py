@@ -1,71 +1,68 @@
-"""
-Google Calendar API helpers (from SLIIT archive server.py).
-Requires token.json from running google_oauth_setup.py once.
-"""
-import datetime
-import os
-from pathlib import Path
-from typing import Optional
+"""Google Calendar API helpers — uses backend/credentials.json + backend/token.json."""
+from __future__ import annotations
 
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Optional
+
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-BACKEND_DIR = Path(__file__).resolve().parent
-TOKEN_PATH = BACKEND_DIR / "token.json"
-
 SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
+_BACKEND = Path(__file__).resolve().parent
+CREDENTIALS_PATH = _BACKEND / "credentials.json"
+TOKEN_PATH = _BACKEND / "token.json"
 
-def format_time(t):
-    """Normalize MySQL TIME / timedelta / str to HH:MM for API responses."""
+
+def format_time(t: Any) -> Optional[str]:
+    """Normalize MySQL TIME / timedelta / str to HH:MM."""
     if t is None:
-        return ""
-
-    if isinstance(t, datetime.timedelta):
-        total_seconds = int(t.total_seconds())
-        hh = (total_seconds // 3600) % 24
-        mm = (total_seconds % 3600) // 60
-        return f"{hh:02d}:{mm:02d}"
-
-    if isinstance(t, (int, float)):
-        total_seconds = int(t)
-        hh = (total_seconds // 3600) % 24
-        mm = (total_seconds % 3600) // 60
-        return f"{hh:02d}:{mm:02d}"
-
-    if isinstance(t, datetime.time):
-        return t.strftime("%H:%M")
-
-    s = str(t)
+        return None
+    if isinstance(t, timedelta):
+        secs = int(t.total_seconds()) % 86400
+        h, m = secs // 3600, (secs % 3600) // 60
+        return f"{h:02d}:{m:02d}"
+    if hasattr(t, "hour") and hasattr(t, "minute"):
+        return f"{int(t.hour):02d}:{int(t.minute):02d}"
+    s = str(t).strip()
     return s[:5] if len(s) >= 5 else s
 
 
 def get_calendar_service():
-    """Build Calendar API v3 service using token.json in the backend folder."""
+    """
+    Build Calendar API service using backend/token.json (create via google_oauth_setup.py).
+    Refreshes expired access tokens; does not open a browser during API requests.
+    """
     if not TOKEN_PATH.exists():
         raise FileNotFoundError(
-            "token.json not found in backend/. Run: python google_oauth_setup.py "
-            "(place credentials.json from Google Cloud Console in backend/ first)."
+            f"Missing {TOKEN_PATH}. Run once: python backend/google_oauth_setup.py "
+            f"(with {CREDENTIALS_PATH} present)."
         )
 
     creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        else:
+            raise FileNotFoundError(
+                "Token invalid or missing refresh. Run: python backend/google_oauth_setup.py"
+            )
+
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
-def build_event_body(title: str, event_date: str, hhmm: str, time_zone: Optional[str] = None):
-    """Google Calendar event body for insert/patch (30-minute duration)."""
-    tz = time_zone or os.getenv("GOOGLE_CALENDAR_TIMEZONE", "Asia/Colombo")
-    if not hhmm:
-        hhmm = "09:00"
-
-    start_dt = f"{event_date}T{hhmm}:00"
-    end_time = (
-        datetime.datetime.strptime(hhmm, "%H:%M") + datetime.timedelta(minutes=30)
-    ).strftime("%H:%M")
-    end_dt = f"{event_date}T{end_time}:00"
-
+def build_event_body(title: str, date_str: str, time_hhmm: str) -> dict:
+    """Single timed event (1 hour) in UTC for the given local calendar date/time strings."""
+    start = datetime.strptime(f"{date_str} {time_hhmm}", "%Y-%m-%d %H:%M")
+    end = start + timedelta(hours=1)
+    tz = os.getenv("CALENDAR_TZ", "UTC")
     return {
         "summary": title,
-        "start": {"dateTime": start_dt, "timeZone": tz},
-        "end": {"dateTime": end_dt, "timeZone": tz},
+        "start": {"dateTime": start.isoformat(), "timeZone": tz},
+        "end": {"dateTime": end.isoformat(), "timeZone": tz},
     }

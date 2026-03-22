@@ -16,6 +16,8 @@ venv/
 backend/.env
 frontend/.env
 frontend/.env.local
+backend/credentials.json
+backend/token.json
 
 # Google Calendar OAuth (backend)
 backend/token.json

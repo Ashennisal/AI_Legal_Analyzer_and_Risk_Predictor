@@ -1,46 +1,59 @@
-"""Persist Gemini-extracted deadlines into the Events table (optional migration)."""
+"""Persist Gemini-extracted calendar rows into Events after document analysis."""
+from __future__ import annotations
+
+import datetime
+import re
 
 import mysql.connector
 
-from mysql.connector import Error as MySQLError
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def try_save_extracted_events(conn, user_id: int, document_id: int, events: list) -> None:
-    """
-    Insert extracted calendar rows after document analysis.
-    Silently skips if Events table is missing (run migrations/002_create_events_table.sql).
-    """
     if not events:
         return
-
-    rows = []
-    for e in events:
-        if not isinstance(e, dict):
-            continue
-        title = (e.get("title") or "").strip() or "Important Deadline"
-        date_s = e.get("date")
-        time_s = e.get("time") or "09:00"
-        if not date_s:
-            continue
-        rows.append((user_id, document_id, title, date_s, time_s))
-
-    if not rows:
-        return
-
     cur = conn.cursor()
     try:
-        cur.executemany(
-            """
-            INSERT IGNORE INTO Events (user_id, document_id, title, event_date, event_time, status, google_event_id)
-            VALUES (%s, %s, %s, %s, %s, 'draft', NULL)
-            """,
-            rows,
-        )
+        for e in events:
+            if not isinstance(e, dict):
+                continue
+            title = (e.get("title") or "").strip() or "Important Deadline"
+            date_iso = (e.get("date") or "").strip()
+            time_s = (e.get("time") or "09:00").strip()
+            if not _ISO_DATE.match(date_iso):
+                continue
+            try:
+                datetime.date.fromisoformat(date_iso)
+            except ValueError:
+                continue
+            try:
+                datetime.datetime.strptime(time_s, "%H:%M")
+            except ValueError:
+                time_s = "09:00"
+
+            cur.execute(
+                """
+                SELECT event_id FROM Events
+                WHERE user_id=%s AND title=%s AND event_date=%s AND event_time=%s
+                LIMIT 1
+                """,
+                (user_id, title, date_iso, time_s),
+            )
+            if cur.fetchone():
+                continue
+
+            cur.execute(
+                """
+                INSERT INTO Events (user_id, document_id, title, event_date, event_time, status, google_event_id)
+                VALUES (%s, %s, %s, %s, %s, 'draft', NULL)
+                """,
+                (user_id, document_id, title, date_iso, time_s),
+            )
         conn.commit()
-    except MySQLError as e:
+    except mysql.connector.Error as err:
         conn.rollback()
-        if e.errno == 1146:
+        if err.errno == 1146:
             return
-        raise
+        print(f"try_save_extracted_events: {err}")
     finally:
         cur.close()

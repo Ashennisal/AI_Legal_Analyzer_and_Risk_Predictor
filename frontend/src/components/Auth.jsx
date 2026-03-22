@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, Shield, ArrowLeft, CheckCircle, MessageSquare, Calendar, Users, BarChart, FileSearch } from 'lucide-react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import axios from 'axios';
@@ -17,10 +17,12 @@ const Auth = () => {
   const navigate = useNavigate();
   const { user, setUser } = useUser();
 
-  if (user?.currentUser) {
-    const isAdmin = user.currentUser.role?.includes?.('Admin');
-    return <Navigate to={isAdmin ? '/admin' : '/'} replace />;
-  }
+  useEffect(() => {
+    if (!user?.currentUser) return;
+    const role = user.currentUser.role;
+    const isAdmin = role === 'Admin' || role === 'Super Admin';
+    navigate(isAdmin ? '/admin' : '/', { replace: true });
+  }, [user?.currentUser, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
