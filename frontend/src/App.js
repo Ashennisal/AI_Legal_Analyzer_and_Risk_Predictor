@@ -2,6 +2,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { UserProvider, useUser } from './context/UserContext.jsx';
+import LegalChatAssistant from './components/assistant/LegalChatAssistant.jsx';
 import AdminOverview from './components/AdminOverview.jsx';
 import Uploader from './components/Uploader.jsx';
 import CalendarSync from './components/CalendarSync.jsx';
@@ -44,6 +45,7 @@ function AppRoutes() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/upload" element={<Uploader />} />
                 <Route path="/calendar" element={<CalendarSync />} />
+                <Route path="/assistant" element={<LegalChatAssistant />} />
                 <Route path="/profile" element={<UserProfile />} />
 
                 <Route path="/admin" element={<AdminOverview />} />

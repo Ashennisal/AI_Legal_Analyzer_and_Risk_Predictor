@@ -15,9 +15,11 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from database import get_db_connection, close_db_connection
 from calendar_events_routes import router as calendar_events_router
 from calendar_events_db import try_save_extracted_events
+from chat_routes import router as chat_router
 
 app = FastAPI(title="AI Legal Analyzer API")
 app.include_router(calendar_events_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
 
 # Configure CORS so your React frontend can talk to this FastAPI backend
 app.add_middleware(

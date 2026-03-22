@@ -1,9 +1,7 @@
 import React from 'react';
-import { Shield, LayoutDashboard, UploadCloud, Calendar, User as UserIcon, LogOut, Bell, Users, BarChart2, FileText, Settings } from 'lucide-react';
+import { Shield, LayoutDashboard, UploadCloud, Calendar, User as UserIcon, LogOut, Bell, Users, BarChart2, FileText, Settings, MessageSquare } from 'lucide-react';
 import { useLocation, Link, useNavigate, Navigate } from 'react-router-dom';
 import { useUser } from '../context/UserContext.jsx';
-import ChatAssistant from './ChatAssistant.jsx'; // <-- Correctly importing the Chat Assistant
-
 const Layout = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -25,6 +23,7 @@ const Layout = ({ children }) => {
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Upload Document', path: '/upload', icon: UploadCloud },
     { name: 'Calendar Sync', path: '/calendar', icon: Calendar },
+    { name: 'AI Assistant', path: '/assistant', icon: MessageSquare },
     { name: 'User Profile', path: '/profile', icon: UserIcon },
   ];
 
@@ -34,6 +33,7 @@ const Layout = ({ children }) => {
     { name: 'User Management', path: '/admin/users', icon: Users },
     { name: 'Analytics', path: '/admin/analytics', icon: BarChart2 },
     { name: 'Documents', path: '/admin/documents', icon: FileText },
+    { name: 'AI Assistant', path: '/assistant', icon: MessageSquare },
     { name: 'Settings', path: '/admin/settings', icon: Settings },
   ];
 
@@ -43,6 +43,8 @@ const Layout = ({ children }) => {
     setUser({ currentUser: null, stats: {}, recentActivity: [] });
     navigate('/login');
   };
+
+  const isAssistantPage = location.pathname === '/assistant';
 
   return (
     <div className="flex h-screen bg-gray-50 font-sans text-gray-800 relative">
@@ -109,13 +111,16 @@ const Layout = ({ children }) => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-8">
+        <main
+          className={
+            isAssistantPage
+              ? 'flex-1 flex flex-col min-h-0 overflow-hidden p-0'
+              : 'flex-1 overflow-y-auto p-8'
+          }
+        >
           {children}
         </main>
       </div>
-
-      {/* ONLY SHOW CHAT FOR NORMAL USERS */}
-      {!isAdmin && <ChatAssistant />}
 
     </div>
   );
