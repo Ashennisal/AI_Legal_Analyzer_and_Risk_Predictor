@@ -512,6 +512,7 @@ async def analyze_uploaded_document(
         from risk_service import detect_risks
         risky_sentences, risky_phrases = detect_risks(text)
         clauses_detected = len(risky_sentences)
+        risk_segments = build_risk_segments(text)
         
         # Calculate Risk Score & Level based on findings
         risk_score = min(100, (clauses_detected * 10) + (len(risky_phrases) * 5))
