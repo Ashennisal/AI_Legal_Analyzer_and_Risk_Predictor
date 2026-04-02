@@ -16,7 +16,6 @@ from database import get_db_connection, close_db_connection
 from calendar_events_routes import router as calendar_events_router
 from calendar_events_db import try_save_extracted_events
 from chat_routes import router as chat_router
-from password_utils import validate_password_strength, hash_password, verify_password
 
 app = FastAPI(title="AI Legal Analyzer API")
 app.include_router(calendar_events_router, prefix="/api")
@@ -253,16 +252,12 @@ def login_user(request: LoginRequest, db = Depends(get_db)):
     try:
         cursor = db.cursor(dictionary=True)
         
-        # Query the database for the user by email
-        cursor.execute("SELECT * FROM users WHERE email = %s", (request.email,))
+        # Query the database for the user by email and password
+        cursor.execute("SELECT * FROM users WHERE email = %s AND password = %s", (request.email, request.password))
         user = cursor.fetchone()
         cursor.close()
 
         if not user:
-            raise HTTPException(status_code=401, detail="Invalid email or password")
-        
-        # Verify password against hash
-        if not verify_password(request.password, user['password']):
             print(f"[AUTH] Failed login attempt for {request.email}")
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
@@ -293,25 +288,11 @@ def login_user(request: LoginRequest, db = Depends(get_db)):
 @app.post("/api/register")
 def register_user(request: RegisterRequest, db = Depends(get_db)):
     try:
-        # Validate password strength
-        password_validation = validate_password_strength(request.password)
-        if not password_validation["valid"]:
-            raise HTTPException(
-                status_code=400, 
-                detail={
-                    "message": "Password does not meet security requirements",
-                    "errors": password_validation["errors"]
-                }
-            )
-        
         cursor = db.cursor()
         
-        # Hash the password before storing
-        hashed_password = hash_password(request.password)
-        
-        # Insert the new user into the database with hashed password
+        # Insert the new user into the database with plain-text password
         sql = "INSERT INTO users (name, email, password, role, status) VALUES (%s, %s, %s, 'User', 'Active')"
-        cursor.execute(sql, (request.name, request.email, hashed_password))
+        cursor.execute(sql, (request.name, request.email, request.password))
         db.commit()
         new_id = cursor.lastrowid
         cursor.close()
@@ -347,7 +328,7 @@ class ChangePasswordRequest(BaseModel):
 
 @app.post("/api/change-password")
 def change_password(request: ChangePasswordRequest, db = Depends(get_db)):
-    """Allow users to change their password with validation."""
+    """Allow users to change their password."""
     try:
         cursor = db.cursor(dictionary=True)
         
@@ -359,23 +340,11 @@ def change_password(request: ChangePasswordRequest, db = Depends(get_db)):
             raise HTTPException(status_code=404, detail="User not found")
         
         # Verify old password
-        if not verify_password(request.old_password, user['password']):
+        if request.old_password != user['password']:
             raise HTTPException(status_code=401, detail="Current password is incorrect")
         
-        # Validate new password strength
-        password_validation = validate_password_strength(request.new_password)
-        if not password_validation["valid"]:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "New password does not meet security requirements",
-                    "errors": password_validation["errors"]
-                }
-            )
-        
-        # Hash and update new password
-        hashed_password = hash_password(request.new_password)
-        cursor.execute("UPDATE users SET password = %s WHERE id = %s", (hashed_password, request.user_id))
+        # Update with new password
+        cursor.execute("UPDATE users SET password = %s WHERE id = %s", (request.new_password, request.user_id))
         db.commit()
         cursor.close()
         
