@@ -12,7 +12,7 @@ try:
     connection = mysql.connector.connect(
         host=os.getenv("MYSQL_HOST", "127.0.0.1"),
         user=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASSWORD", ""),
+        password=os.getenv("MYSQL_PASSWORD", "1234"),
         port=int(os.getenv("MYSQL_PORT", "3306")),
         database=os.getenv("MYSQL_DATABASE", "legal_analyzer_db")
     )
