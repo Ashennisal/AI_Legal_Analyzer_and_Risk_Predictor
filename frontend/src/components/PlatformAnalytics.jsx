@@ -58,7 +58,10 @@ const PlatformAnalytics = () => {
         </button>
       </div>
 
-      {/* Line Chart: Documents Uploaded Over Time */}
+      {/* Debug Info - Remove in production */}
+      <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg text-xs font-mono">
+        <p className="text-blue-900">📊 Debug: Timeline({data.timelineData?.length}) | Risk({data.riskData?.length}) | Clauses({data.clauseData?.length})</p>
+      </div>
       <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
         <h2 className="text-lg font-bold mb-6 flex items-center gap-2 text-slate-800">
           <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
