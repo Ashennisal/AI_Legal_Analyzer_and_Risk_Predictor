@@ -180,7 +180,7 @@ def get_platform_analytics(db = Depends(get_db)):
         # Get total clauses detected across all documents
         cursor.execute("SELECT SUM(clauses_detected) as total FROM documents")
         result = cursor.fetchone()
-        total_clauses = result['total'] if result and result['total'] else 0
+        total_clauses = int(result['total']) if result and result['total'] else 0
 
         print(f"[Analytics] Total clauses = {total_clauses}")
 
