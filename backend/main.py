@@ -182,7 +182,7 @@ def get_platform_analytics(db = Depends(get_db)):
         result = cursor.fetchone()
         total_clauses = result['total'] if result and result['total'] else 0
 
-        print(f"📊 Analytics: Total clauses = {total_clauses}")
+        print(f"[Analytics] Total clauses = {total_clauses}")
 
         # Since we don't store exact clause names in the DB yet, we dynamically 
         # distribute the real total count across common legal categories
@@ -212,7 +212,7 @@ def get_platform_analytics(db = Depends(get_db)):
                 "color": risk_colors[level],
             })
 
-        print(f"📊 Analytics Response: timeline={timeline_data}, risks={risk_data}, clauses={clause_data}")
+        print(f"[Analytics] Timeline={len(timeline_data)}, Risk={len(risk_data)}, Clauses={len(clause_data)}")
 
         cursor.close()
         return {
@@ -221,7 +221,9 @@ def get_platform_analytics(db = Depends(get_db)):
             "clauseData": clause_data
         }
     except Exception as e:
-        print(f"❌ Error fetching analytics: {e}")
+        print(f"[ERROR] Analytics error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail="Error fetching analytics data")
 
 @app.get("/api/admin/documents")
