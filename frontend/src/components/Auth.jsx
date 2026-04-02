@@ -1,8 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, Lock, User, Shield, ArrowLeft, CheckCircle, MessageSquare, Calendar, Users, BarChart, FileSearch } from 'lucide-react';
+import { Mail, Lock, User, Shield, ArrowLeft, CheckCircle, MessageSquare, Calendar, Users, BarChart, FileSearch, Check, X } from 'lucide-react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import axios from 'axios';
 import { useUser } from '../context/UserContext';
+
+// Password strength validation helper
+const validatePasswordStrength = (password) => {
+  return {
+    minLength: password.length >= 8,
+    hasUppercase: /[A-Z]/.test(password),
+    hasLowercase: /[a-z]/.test(password),
+    hasNumber: /\d/.test(password),
+    hasSymbol: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)
+  };
+};
+
+const PasswordRequirementItem = ({ met, label }) => (
+  <div className="flex items-center gap-2">
+    {met ? (
+      <Check className="w-4 h-4 text-green-500" />
+    ) : (
+      <X className="w-4 h-4 text-slate-300" />
+    )}
+    <span className={met ? 'text-green-700 font-medium' : 'text-slate-500 text-sm'}>
+      {label}
+    </span>
+  </div>
+);
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -13,6 +37,13 @@ const Auth = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [passwordStrength, setPasswordStrength] = useState({
+    minLength: false,
+    hasUppercase: false,
+    hasLowercase: false,
+    hasNumber: false,
+    hasSymbol: false
+  });
 
   const navigate = useNavigate();
   const { user, setUser } = useUser();
@@ -247,11 +278,45 @@ const Auth = () => {
                     type="password" 
                     required 
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (!isLogin && !isAdminMode) {
+                        setPasswordStrength(validatePasswordStrength(e.target.value));
+                      }
+                    }}
                     placeholder={isAdminMode ? "Enter admin password" : "Enter your password"}
                     className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" 
                   />
                 </div>
+
+                {/* Password Requirements (Only shown during signup) */}
+                {!isLogin && !isAdminMode && password && (
+                  <div className="mt-3 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                    <p className="text-xs font-bold text-slate-700 mb-3">Password Requirements:</p>
+                    <div className="space-y-2">
+                      <PasswordRequirementItem 
+                        met={passwordStrength.minLength} 
+                        label="At least 8 characters"
+                      />
+                      <PasswordRequirementItem 
+                        met={passwordStrength.hasUppercase} 
+                        label="One uppercase letter (A-Z)"
+                      />
+                      <PasswordRequirementItem 
+                        met={passwordStrength.hasLowercase} 
+                        label="One lowercase letter (a-z)"
+                      />
+                      <PasswordRequirementItem 
+                        met={passwordStrength.hasNumber} 
+                        label="One number (0-9)"
+                      />
+                      <PasswordRequirementItem 
+                        met={passwordStrength.hasSymbol} 
+                        label="One special character (!@#$%^&* etc)"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Extras (Remember Me / Forgot Password) */}
@@ -268,8 +333,8 @@ const Auth = () => {
               {/* Submit Button */}
               <button 
                 type="submit" 
-                disabled={isLoading}
-                className={`w-full py-3 px-4 rounded-lg font-bold text-white transition-colors mt-2 disabled:opacity-70 ${isAdminMode ? 'bg-[#ef4444] hover:bg-red-600' : 'bg-[#3b82f6] hover:bg-blue-600'}`}
+                disabled={isLoading || (!isLogin && !isAdminMode && !Object.values(passwordStrength).every(v => v))}
+                className={`w-full py-3 px-4 rounded-lg font-bold text-white transition-colors mt-2 disabled:opacity-50 disabled:cursor-not-allowed ${isAdminMode ? 'bg-[#ef4444] hover:bg-red-600 disabled:hover:bg-red-400' : 'bg-[#3b82f6] hover:bg-blue-600 disabled:hover:bg-blue-500'}`}
               >
                 {isLoading 
                   ? 'Processing...' 

@@ -16,6 +16,7 @@ from database import get_db_connection, close_db_connection
 from calendar_events_routes import router as calendar_events_router
 from calendar_events_db import try_save_extracted_events
 from chat_routes import router as chat_router
+from password_utils import validate_password_strength, hash_password, verify_password
 
 app = FastAPI(title="AI Legal Analyzer API")
 app.include_router(calendar_events_router, prefix="/api")
@@ -252,18 +253,25 @@ def login_user(request: LoginRequest, db = Depends(get_db)):
     try:
         cursor = db.cursor(dictionary=True)
         
-        # Query the database for the user
-        cursor.execute("SELECT * FROM users WHERE email = %s AND password = %s", (request.email, request.password))
+        # Query the database for the user by email
+        cursor.execute("SELECT * FROM users WHERE email = %s", (request.email,))
         user = cursor.fetchone()
         cursor.close()
 
         if not user:
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
+        # Verify password against hash
+        if not verify_password(request.password, user['password']):
+            print(f"[AUTH] Failed login attempt for {request.email}")
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
         # Check if they are trying to log into the correct portal
         is_actually_admin = "Admin" in user['role']
         if request.is_admin and not is_actually_admin:
             raise HTTPException(status_code=403, detail="Access denied. You do not have admin privileges.")
+
+        print(f"[AUTH] User logged in: {request.email}")
 
         # Return the real user data
         return {
@@ -279,18 +287,36 @@ def login_user(request: LoginRequest, db = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[ERROR] Login error: {e}")
         raise HTTPException(status_code=500, detail=f"Login error: {str(e)}")
 
 @app.post("/api/register")
 def register_user(request: RegisterRequest, db = Depends(get_db)):
     try:
+        # Validate password strength
+        password_validation = validate_password_strength(request.password)
+        if not password_validation["valid"]:
+            raise HTTPException(
+                status_code=400, 
+                detail={
+                    "message": "Password does not meet security requirements",
+                    "errors": password_validation["errors"]
+                }
+            )
+        
         cursor = db.cursor()
-        # Insert the new user into the database
+        
+        # Hash the password before storing
+        hashed_password = hash_password(request.password)
+        
+        # Insert the new user into the database with hashed password
         sql = "INSERT INTO users (name, email, password, role, status) VALUES (%s, %s, %s, 'User', 'Active')"
-        cursor.execute(sql, (request.name, request.email, request.password))
+        cursor.execute(sql, (request.name, request.email, hashed_password))
         db.commit()
         new_id = cursor.lastrowid
         cursor.close()
+        
+        print(f"[AUTH] New user registered: {request.email} (ID: {new_id})")
         
         return {
             "message": "Registration successful",
@@ -302,13 +328,112 @@ def register_user(request: RegisterRequest, db = Depends(get_db)):
                 "role": "User"
             }
         }
+    except HTTPException:
+        raise
     except Exception as err:
         cursor.close()
         # Check for duplicate email (MySQL error 1062)
         if "Duplicate entry" in str(err):
             raise HTTPException(status_code=400, detail="Email already exists")
+        print(f"[ERROR] Registration error: {err}")
         raise HTTPException(status_code=500, detail=f"Registration error: {str(err)}")
 
+# --- Password Management Endpoints ---
+
+class ChangePasswordRequest(BaseModel):
+    user_id: int
+    old_password: str
+    new_password: str
+
+@app.post("/api/change-password")
+def change_password(request: ChangePasswordRequest, db = Depends(get_db)):
+    """Allow users to change their password with validation."""
+    try:
+        cursor = db.cursor(dictionary=True)
+        
+        # Get user
+        cursor.execute("SELECT * FROM users WHERE id = %s", (request.user_id,))
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Verify old password
+        if not verify_password(request.old_password, user['password']):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        
+        # Validate new password strength
+        password_validation = validate_password_strength(request.new_password)
+        if not password_validation["valid"]:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "New password does not meet security requirements",
+                    "errors": password_validation["errors"]
+                }
+            )
+        
+        # Hash and update new password
+        hashed_password = hash_password(request.new_password)
+        cursor.execute("UPDATE users SET password = %s WHERE id = %s", (hashed_password, request.user_id))
+        db.commit()
+        cursor.close()
+        
+        print(f"[AUTH] User {user['email']} changed password")
+        
+        return {"message": "Password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] Change password error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.post("/api/admin/hash-existing-passwords")
+def hash_existing_passwords(db = Depends(get_db)):
+    """Admin endpoint to convert plain-text passwords to hashed ones (RUN ONCE)."""
+    try:
+        cursor = db.cursor(dictionary=True)
+        
+        # Get all users with plain-text passwords (not starting with $2b$ which is bcrypt)
+        cursor.execute("SELECT id, email, password FROM users WHERE password NOT LIKE '$2b$%'")
+        users = cursor.fetchall()
+        
+        if not users:
+            cursor.close()
+            return {"message": "No plain-text passwords found. All passwords are already hashed."}
+        
+        updated_count = 0
+        errors = []
+        
+        for user in users:
+            try:
+                # Hash the plain-text password
+                hashed_password = hash_password(user['password'])
+                
+                # Update the database
+                cursor.execute("UPDATE users SET password = %s WHERE id = %s", (hashed_password, user['id']))
+                updated_count += 1
+                print(f"[MIGRATION] Hashed password for user {user['email']} (ID: {user['id']})")
+            except Exception as user_err:
+                errors.append(f"Error hashing password for {user['email']}: {str(user_err)}")
+                print(f"[ERROR] Failed to hash password for {user['email']}: {user_err}")
+        
+        db.commit()
+        cursor.close()
+        
+        result = {
+            "message": f"Password migration completed",
+            "total_users": len(users),
+            "updated": updated_count,
+            "errors": errors
+        }
+        
+        print(f"[MIGRATION] Hashed passwords for {updated_count} users")
+        return result
+        
+    except Exception as e:
+        print(f"[ERROR] Password migration error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 # --- Calendar Sync Endpoints ---
 
