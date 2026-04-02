@@ -179,16 +179,19 @@ def get_platform_analytics(db = Depends(get_db)):
 
         # Get total clauses detected across all documents
         cursor.execute("SELECT SUM(clauses_detected) as total FROM documents")
-        total_clauses = cursor.fetchone()['total'] or 0
+        result = cursor.fetchone()
+        total_clauses = result['total'] if result and result['total'] else 0
+
+        print(f"📊 Analytics: Total clauses = {total_clauses}")
 
         # Since we don't store exact clause names in the DB yet, we dynamically 
         # distribute the real total count across common legal categories
         clause_data = [
-            { "name": 'Confidentiality', "count": int(total_clauses * 0.35) or 14 },
-            { "name": 'Indemnification', "count": int(total_clauses * 0.25) or 12 },
-            { "name": 'Termination', "count": int(total_clauses * 0.20) or 9 },
-            { "name": 'Liability Limit', "count": int(total_clauses * 0.15) or 8 },
-            { "name": 'Non-Compete', "count": int(total_clauses * 0.05) or 5 }
+            { "name": 'Confidentiality', "count": int(total_clauses * 0.35) or 1 },
+            { "name": 'Indemnification', "count": int(total_clauses * 0.25) or 1 },
+            { "name": 'Termination', "count": int(total_clauses * 0.20) or 1 },
+            { "name": 'Liability Limit', "count": int(total_clauses * 0.15) or 1 },
+            { "name": 'Non-Compete', "count": int(total_clauses * 0.05) or 1 }
         ]
 
         risk_colors = {"Low": "#22c55e", "Medium": "#eab308", "High": "#ef4444"}
@@ -209,14 +212,16 @@ def get_platform_analytics(db = Depends(get_db)):
                 "color": risk_colors[level],
             })
 
+        print(f"📊 Analytics Response: timeline={timeline_data}, risks={risk_data}, clauses={clause_data}")
+
         cursor.close()
         return {
             "timelineData": timeline_data,
             "riskData": risk_data,
-            "clauseData": clause_data # Now using the dynamic data!
+            "clauseData": clause_data
         }
     except Exception as e:
-        print(f"Error fetching analytics: {e}")
+        print(f"❌ Error fetching analytics: {e}")
         raise HTTPException(status_code=500, detail="Error fetching analytics data")
 
 @app.get("/api/admin/documents")

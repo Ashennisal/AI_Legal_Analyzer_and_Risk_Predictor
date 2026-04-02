@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from 'recharts';
 import axios from 'axios';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 
 const PlatformAnalytics = () => {
   const [data, setData] = useState({
@@ -10,19 +10,27 @@ const PlatformAnalytics = () => {
     clauseData: []
   });
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchAnalytics = async () => {
+    try {
+      setRefreshing(true);
+      const response = await axios.get('http://127.0.0.1:8000/api/admin/analytics');
+      setData(response.data);
+      console.log("Analytics refreshed:", response.data);
+    } catch (error) {
+      console.error("Failed to fetch analytics:", error);
+    } finally {
+      setRefreshing(false);
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      try {
-        const response = await axios.get('http://127.0.0.1:8000/api/admin/analytics');
-        setData(response.data);
-      } catch (error) {
-        console.error("Failed to fetch analytics:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchAnalytics();
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchAnalytics, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   if (loading) {
@@ -35,9 +43,19 @@ const PlatformAnalytics = () => {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-fade-in text-gray-800">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Platform Analytics</h1>
-        <p className="text-gray-500 mt-1">Usage trends, risk distribution, and clause analysis.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Platform Analytics</h1>
+          <p className="text-gray-500 mt-1">Usage trends, risk distribution, and clause analysis.</p>
+        </div>
+        <button
+          onClick={fetchAnalytics}
+          disabled={refreshing}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-all"
+        >
+          <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
       </div>
 
       {/* Line Chart: Documents Uploaded Over Time */}
