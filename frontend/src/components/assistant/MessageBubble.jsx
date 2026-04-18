@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const UserAvatar = () => (
   <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center shrink-0">
@@ -14,7 +15,6 @@ const AIAvatar = () => (
     ✦
   </div>
 );
-
 const markdownComponents = {
   p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-gray-900 dark:text-white">{children}</strong>,
@@ -44,6 +44,32 @@ const markdownComponents = {
       {children}
     </a>
   ),
+  table: ({ children }) => (
+    <div className="my-3 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+      <table className="min-w-full text-sm border-collapse">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead className="bg-violet-600 text-white">{children}</thead>
+  ),
+  tbody: ({ children }) => (
+    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">{children}</tbody>
+  ),
+  tr: ({ children }) => (
+    <tr className="even:bg-gray-50 dark:even:bg-gray-800/40 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors">
+      {children}
+    </tr>
+  ),
+  th: ({ children }) => (
+    <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide whitespace-nowrap">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="px-4 py-2.5 text-gray-700 dark:text-gray-300 leading-relaxed">
+      {children}
+    </td>
+  ),
 };
 
 export default function MessageBubble({ text, isUser, document_name: documentName }) {
@@ -69,7 +95,7 @@ export default function MessageBubble({ text, isUser, document_name: documentNam
       <AIAvatar />
       <div className="max-w-[80%] bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
         <div className="text-sm text-gray-800 dark:text-gray-200">
-          <ReactMarkdown components={markdownComponents}>{text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>
         </div>
       </div>
     </div>
