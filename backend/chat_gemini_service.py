@@ -1,5 +1,7 @@
-"""Gemini multi-turn chat with optional PDF/image attachment (legal assistant context)."""
+"""Gemini multi-turn de chat with optional PDF/image attachment (legal assistant context)."""
 from __future__ import annotations
+
+
 
 import os
 import tempfile
