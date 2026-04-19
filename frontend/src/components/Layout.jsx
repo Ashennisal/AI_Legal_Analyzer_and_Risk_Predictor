@@ -33,7 +33,6 @@ const Layout = ({ children }) => {
     { name: 'User Management', path: '/admin/users', icon: Users },
     { name: 'Analytics', path: '/admin/analytics', icon: BarChart2 },
     { name: 'Documents', path: '/admin/documents', icon: FileText },
-    { name: 'AI Assistant', path: '/assistant', icon: MessageSquare },
     { name: 'Settings', path: '/admin/settings', icon: Settings },
   ];
 
