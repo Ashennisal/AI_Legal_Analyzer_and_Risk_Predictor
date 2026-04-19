@@ -7,7 +7,14 @@ const PlatformAnalytics = () => {
   const [data, setData] = useState({
     timelineData: [],
     riskData: [],
-    clauseData: []
+    clauseData: [],
+    stats: {
+      totalDocuments: 0,
+      totalClauses: 0,
+      highRiskDocuments: 0,
+      mediumRiskDocuments: 0,
+      lowRiskDocuments: 0,
+    }
   });
   const [loading, setLoading] = useState(true);
 
@@ -37,7 +44,25 @@ const PlatformAnalytics = () => {
     <div className="max-w-6xl mx-auto space-y-6 animate-fade-in text-gray-800">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Platform Analytics</h1>
-        <p className="text-gray-500 mt-1">Usage trends, risk distribution, and clause analysis.</p>
+        <p className="text-gray-500 mt-1">Usage trends, risk distribution, and most common risk phrases.</p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+          <p className="text-sm text-slate-500">Total Documents</p>
+          <p className="mt-3 text-3xl font-semibold text-slate-900">{data.stats.totalDocuments}</p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+          <p className="text-sm text-slate-500">Total Risk Findings</p>
+          <p className="mt-3 text-3xl font-semibold text-slate-900">{data.stats.totalClauses}</p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+          <p className="text-sm text-slate-500">High Risk Documents</p>
+          <p className="mt-3 text-3xl font-semibold text-slate-900">{data.stats.highRiskDocuments}</p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+          <p className="text-sm text-slate-500">Medium Risk Documents</p>
+          <p className="mt-3 text-3xl font-semibold text-slate-900">{data.stats.mediumRiskDocuments}</p>
+        </div>
       </div>
 
       {/* Line Chart: Documents Uploaded Over Time */}
@@ -85,9 +110,9 @@ const PlatformAnalytics = () => {
           </div>
         </div>
 
-        {/* Horizontal Bar Chart: Common Clauses */}
+        {/* Horizontal Bar Chart: Most Common Risk Phrases */}
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-          <h2 className="text-lg font-bold mb-6 text-slate-800">Most Common Clause Types</h2>
+          <h2 className="text-lg font-bold mb-6 text-slate-800">Most Common Risk Phrases</h2>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data.clauseData} layout="vertical" margin={{ top: 0, right: 20, left: 40, bottom: 0 }}>

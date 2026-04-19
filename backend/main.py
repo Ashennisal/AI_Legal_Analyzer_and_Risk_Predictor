@@ -181,15 +181,53 @@ def get_platform_analytics(db = Depends(get_db)):
         cursor.execute("SELECT SUM(clauses_detected) as total FROM documents")
         total_clauses = cursor.fetchone()['total'] or 0
 
-        # Since we don't store exact clause names in the DB yet, we dynamically 
-        # distribute the real total count across common legal categories
-        clause_data = [
-            { "name": 'Confidentiality', "count": int(total_clauses * 0.35) or 14 },
-            { "name": 'Indemnification', "count": int(total_clauses * 0.25) or 12 },
-            { "name": 'Termination', "count": int(total_clauses * 0.20) or 9 },
-            { "name": 'Liability Limit', "count": int(total_clauses * 0.15) or 8 },
-            { "name": 'Non-Compete', "count": int(total_clauses * 0.05) or 5 }
-        ]
+        cursor.execute("SELECT COUNT(*) as total_docs FROM documents")
+        total_documents = cursor.fetchone()['total_docs'] or 0
+
+        cursor.execute("SELECT COUNT(*) as high_docs FROM documents WHERE risk_level = 'High'")
+        high_risk_documents = cursor.fetchone()['high_docs'] or 0
+        cursor.execute("SELECT COUNT(*) as medium_docs FROM documents WHERE risk_level = 'Medium'")
+        medium_risk_documents = cursor.fetchone()['medium_docs'] or 0
+        cursor.execute("SELECT COUNT(*) as low_docs FROM documents WHERE risk_level = 'Low'")
+        low_risk_documents = cursor.fetchone()['low_docs'] or 0
+
+        phrase_counts = {}
+        try:
+            cursor.execute("SELECT analysis_json FROM documents WHERE analysis_json IS NOT NULL")
+            phrase_rows = cursor.fetchall()
+            for row in phrase_rows:
+                raw_json = row.get('analysis_json') if isinstance(row, dict) else None
+                if not raw_json:
+                    continue
+                try:
+                    parsed = json.loads(raw_json)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                risky_phrases = parsed.get('analysis', {}).get('risky_phrases', [])
+                if isinstance(risky_phrases, list):
+                    for phrase in risky_phrases:
+                        if phrase:
+                            phrase_counts[phrase] = phrase_counts.get(phrase, 0) + 1
+        except Exception:
+            phrase_counts = {}
+
+        if phrase_counts:
+            clause_data = sorted(
+                [
+                    {"name": phrase.title(), "count": count}
+                    for phrase, count in phrase_counts.items()
+                ],
+                key=lambda x: x['count'],
+                reverse=True
+            )[:6]
+        else:
+            clause_data = [
+                { "name": 'Confidentiality', "count": int(total_clauses * 0.35) or 14 },
+                { "name": 'Indemnification', "count": int(total_clauses * 0.25) or 12 },
+                { "name": 'Termination', "count": int(total_clauses * 0.20) or 9 },
+                { "name": 'Liability Limit', "count": int(total_clauses * 0.15) or 8 },
+                { "name": 'Non-Compete', "count": int(total_clauses * 0.05) or 5 }
+            ]
 
         risk_colors = {"Low": "#22c55e", "Medium": "#eab308", "High": "#ef4444"}
         cursor.execute(
@@ -213,7 +251,14 @@ def get_platform_analytics(db = Depends(get_db)):
         return {
             "timelineData": timeline_data,
             "riskData": risk_data,
-            "clauseData": clause_data # Now using the dynamic data!
+            "clauseData": clause_data,
+            "stats": {
+                "totalDocuments": total_documents,
+                "totalClauses": total_clauses,
+                "highRiskDocuments": high_risk_documents,
+                "mediumRiskDocuments": medium_risk_documents,
+                "lowRiskDocuments": low_risk_documents,
+            }
         }
     except Exception as e:
         print(f"Error fetching analytics: {e}")
