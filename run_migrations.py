@@ -27,11 +27,11 @@ try:
         'backend/migrations/003_chat_assistant.sql'
     ]
     
-    print("🔄 Running database migrations...\n")
+    print("Running database migrations...\n")
     
     for migration_file in migration_files:
         if Path(migration_file).exists():
-            print(f"📝 Running: {migration_file}")
+            print(f"Running: {migration_file}")
             with open(migration_file, 'r', encoding='utf-8') as f:
                 sql = f.read()
                 # Split by semicolon and execute each statement
@@ -41,28 +41,28 @@ try:
                         cursor.execute(statement)
                     except mysql.connector.Error as err:
                         if err.errno == 1060:  # Duplicate column
-                            print(f"   ⚠️  Column already exists (skipped)")
+                            print(f"   Warning: Column already exists (skipped)")
                         elif err.errno == 1050:  # Table already exists
-                            print(f"   ⚠️  Table already exists (skipped)")
+                            print(f"   Warning: Table already exists (skipped)")
                         else:
-                            print(f"   ❌ Error: {err}")
+                            print(f"   Error: {err}")
                 connection.commit()
-            print(f"   ✅ Completed\n")
+            print(f"   Completed\n")
         else:
-            print(f"   ❌ File not found: {migration_file}\n")
+            print(f"   Error: File not found: {migration_file}\n")
     
     cursor.close()
     connection.close()
-    print("✅ All migrations completed successfully!")
+    print("All migrations completed successfully!")
     
 except mysql.connector.Error as err:
     if err.errno == 2003:
-        print("❌ Cannot connect to MySQL. Is the MySQL server running?")
+        print("Error: Cannot connect to MySQL. Is the MySQL server running?")
     elif err.errno == 1045:
-        print("❌ Access denied. Check MYSQL_USER and MYSQL_PASSWORD in backend/.env")
+        print("Error: Access denied. Check MYSQL_USER and MYSQL_PASSWORD in backend/.env")
     elif err.errno == 1049:
-        print("❌ Unknown database. Create 'legal_analyzer_db' in MySQL first.")
+        print("Error: Unknown database. Create 'legal_analyzer_db' in MySQL first.")
     else:
-        print(f"❌ Error: {err}")
+        print(f"Error: {err}")
 except Exception as e:
-    print(f"❌ Error: {e}")
+    print(f"Error: {e}")
