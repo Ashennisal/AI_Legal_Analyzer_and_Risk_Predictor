@@ -24,7 +24,9 @@ try:
         'backend/migrations/000_create_users_table.sql',
         'backend/migrations/001_add_analysis_json.sql',
         'backend/migrations/002_create_events_table.sql',
-        'backend/migrations/003_chat_assistant.sql'
+        'backend/migrations/003_chat_assistant.sql',
+        'backend/migrations/004_documents_table.sql'
+
     ]
     
     print("Running database migrations...\n")
