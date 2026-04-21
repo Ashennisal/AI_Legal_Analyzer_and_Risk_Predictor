@@ -64,6 +64,9 @@ const CalendarSync = () => {
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState(null);
 
+  const [modalError, setModalError] = useState('');
+  const [modalErrorFor, setModalErrorFor] = useState(null);
+
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
@@ -103,6 +106,30 @@ const CalendarSync = () => {
     return map;
   }, [events]);
 
+  const upcomingSyncedEvents = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // start of today
+
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7); // up to 7 days from today
+
+    return events.filter(ev => {
+      if (ev.status !== 'synced') return false;
+      if (!ev.event_date) return false;
+      const evDate = new Date(ev.event_date);
+      evDate.setHours(0, 0, 0, 0);
+      return evDate >= today && evDate <= nextWeek;
+    }).sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
+  }, [events]);
+
+  // Only show deadlines from today onwards
+  const futureEvents = useMemo(() => {
+    return events.filter(ev => {
+      if (!ev.event_date) return false;
+      return ev.event_date >= todayIso;
+    });
+  }, [events, todayIso]);
+
   const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleString(undefined, {
     month: 'long',
     year: 'numeric',
@@ -120,36 +147,164 @@ const CalendarSync = () => {
     }
   };
 
-  const openAddModal = (isoDate) => {
-    setModal({
-      event_date: isoDate,
-      title: 'New deadline',
-      event_time: '09:00',
-    });
+  const openDateModal = (isoDate) => {
+    const dayEvents = (eventsByDate[isoDate] || [])
+      .map((ev) => ({
+        event_id: ev.event_id,
+        title: ev.title || '',
+        event_date: ev.event_date || isoDate,
+        event_time: ev.event_time || '09:00',
+        status: ev.status || 'draft',
+      }))
+      .sort((a, b) => (a.event_time || '').localeCompare(b.event_time || ''));
+
     setError(null);
+    setModalError('');
+    setModalErrorFor(null);  
+
+    setModal({
+      selectedDate: isoDate,
+      items: dayEvents,
+      showAddForm: false,
+      newItem: {
+        title: 'New deadline',
+        event_date: isoDate < todayIso ? todayIso : isoDate,
+        event_time: '09:00',
+      },
+    });
   };
 
-  const saveNewEvent = async () => {
+  const updateModalEvent = (eventId, field, value) => {
+    setModal((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        items: prev.items.map((item) =>
+          item.event_id === eventId ? { ...item, [field]: value } : item
+        ),
+      };
+    });
+  };
+
+  const saveEditedEvent = async (item) => {
+    if (!userId) return;
+
+  if (item.event_date < todayIso) {
+    setModalError('⛔ You cannot move a deadline to a past date.');
+    setModalErrorFor(item.event_id);
+    return;
+  }
+
+    setBusyId(`edit-${item.event_id}`);
+    setError(null);
+    setModalError('');
+    setModalErrorFor(null);
+
+    try {
+      await axios.put(
+        `${API}/api/events/${item.event_id}`,
+        {
+          title: item.title,
+          event_date: item.event_date,
+          event_time: item.event_time || '09:00',
+        },
+        { params: { user_id: userId } }
+      );
+
+      await load();
+
+      setModal((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          items: prev.items
+            .map((ev) =>
+              ev.event_id === item.event_id
+                ? { ...ev, event_date: item.event_date, event_time: item.event_time || '09:00' }
+                : ev
+            )
+            .filter((ev) => ev.event_date === prev.selectedDate),
+        };
+      });
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      setModalError(typeof d === 'string' ? d : e.message || 'Could not update event');
+      setModalErrorFor(item.event_id);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const updateNewModalItem = (field, value) => {
+    setModal((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        newItem: {
+          ...prev.newItem,
+          [field]: value,
+        },
+      };
+    });
+  };
+
+  const saveNewModalEvent = async () => {
     if (!modal || !userId) return;
-    const title = (modal.title || '').trim();
+
+    const title = (modal.newItem.title || '').trim();
     if (title.length < 3) {
       setError('Title must be at least 3 characters.');
       return;
     }
-    setBusyId('new');
+
+    if (modal.newItem.event_date < todayIso) {
+      setError('⛔ You cannot save a deadline for a past date.');
+      return;
+    }
+
+    setBusyId('modal-new');
     setError(null);
+
     try {
-      await axios.post(
+      const { data } = await axios.post(
         `${API}/api/events`,
         {
           title,
-          event_date: modal.event_date,
-          event_time: modal.event_time || '09:00',
+          event_date: modal.newItem.event_date,
+          event_time: modal.newItem.event_time || '09:00',
         },
-        { params: { user_id: userId } },
+        { params: { user_id: userId } }
       );
-      setModal(null);
+
       await load();
+
+      setModal((prev) => {
+        if (!prev) return prev;
+
+        const newEvent = {
+          event_id: data.event_id,
+          title,
+          event_date: modal.newItem.event_date,
+          event_time: modal.newItem.event_time || '09:00',
+          status: 'draft',
+        };
+
+        return {
+          ...prev,
+          items:
+            newEvent.event_date === prev.selectedDate
+              ? [...prev.items, newEvent].sort((a, b) =>
+                  (a.event_time || '').localeCompare(b.event_time || '')
+                )
+              : prev.items,
+          showAddForm: false,
+          newItem: {
+            title: 'New deadline',
+            event_date: prev.selectedDate < todayIso ? todayIso : prev.selectedDate,
+            event_time: '09:00',
+          },
+        };
+      });
     } catch (e) {
       const d = e.response?.data?.detail;
       setError(typeof d === 'string' ? d : e.message || 'Could not save event');
@@ -158,7 +313,27 @@ const CalendarSync = () => {
     }
   };
 
+
+
   const sync = async (eventId) => {
+    // Check for conflict: another synced event on the same date AND time
+    const target = events.find(ev => ev.event_id === eventId);
+    if (target) {
+      const conflict = events.find(ev =>
+        ev.event_id !== eventId &&
+        ev.status === 'synced' &&
+        ev.event_date === target.event_date &&
+        ev.event_time === target.event_time
+      );
+      if (conflict) {
+        setError(
+          `⛔ Conflict: "${conflict.title}" is already synced to Google Calendar on ${target.event_date} at ${target.event_time}. ` +
+          `Please change the time of one of these deadlines before syncing.`
+        );
+        return;
+      }
+    }
+
     setBusyId(eventId);
     setError(null);
     try {
@@ -166,6 +341,7 @@ const CalendarSync = () => {
       await load();
     } catch (e) {
       setError(e.response?.data?.detail || e.message || 'Sync failed');
+
     } finally {
       setBusyId(null);
     }
@@ -214,9 +390,6 @@ const CalendarSync = () => {
             <CalendarIcon className="w-8 h-8 text-blue-600" />
             Calendar &amp; Deadlines
           </h1>
-          <p className="text-gray-500 mt-1">
-            Deadlines from analysis and ones you add here. Sync to Google Calendar when ready.
-          </p>
         </div>
         <button
           type="button"
@@ -228,16 +401,31 @@ const CalendarSync = () => {
         </button>
       </div>
 
+      {upcomingSyncedEvents.length > 0 && (
+        <div className="bg-blue-50 border border-red-200 rounded-xl p-5 shadow-sm animate-fade-in">
+          <div className="flex items-center gap-2 mb-4">
+            <AlertCircle className="w-5 h-5 text-red-600" />
+            <h2 className="text-lg font-bold text-red-700">Upcoming Synced Deadlines (Next 7 Days)</h2>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {upcomingSyncedEvents.map(ev => (
+              <div key={ev.event_id} className="bg-white border border-blue-100 rounded-lg p-3 shadow-sm flex flex-col hover:border-blue-300 transition-colors">
+                <span className="font-bold text-slate-800 truncate" title={ev.title}>{ev.title}</span>
+                <span className="text-sm font-medium text-blue-700 mt-2 flex items-center gap-1.5">
+                  <CalendarIcon className="w-4 h-4 shrink-0" />
+                  {ev.event_date} {ev.event_time && <><Clock className="w-3.5 h-3.5 ml-1 shrink-0" /> {ev.event_time}</>}
+                </span>
+                <span className="text-[10px] uppercase font-bold text-blue-500 mt-1 tracking-wider">Synced to Google</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {warning && (
         <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-sm p-4">
           <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
           <span>{warning}</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
-          {error}
         </div>
       )}
 
@@ -279,16 +467,15 @@ const CalendarSync = () => {
                 <button
                   key={cell.key}
                   type="button"
-                  onClick={() => openAddModal(cell.iso)}
-                  title={`Add deadline on ${cell.iso}`}
+                  onClick={() => openDateModal(cell.iso)}
+                  title={`View deadlines on ${cell.iso}`}
                   className={`aspect-square min-h-[2.5rem] rounded-lg border text-sm font-medium transition-colors flex flex-col items-center justify-start pt-1 px-0.5
-                      ${
-                        isPast
-                          ? 'border-gray-100 bg-slate-50/80 text-slate-600 hover:border-blue-200 hover:bg-blue-50/40'
-                          : isToday
-                            ? 'border-blue-500 bg-blue-50 text-blue-900'
-                            : 'border-gray-100 hover:border-blue-300 hover:bg-blue-50/50 text-slate-800'
-                      }`}
+                      ${isPast
+                      ? 'border-gray-100 bg-slate-50/80 text-slate-600 hover:border-blue-200 hover:bg-blue-50/40'
+                      : isToday
+                        ? 'border-blue-500 bg-blue-50 text-blue-900'
+                        : 'border-gray-100 hover:border-blue-300 hover:bg-blue-50/50 text-slate-800'
+                    }`}
                 >
                   <span>{cell.day}</span>
                   {dayEvents.length > 0 && (
@@ -299,22 +486,18 @@ const CalendarSync = () => {
                 </button>
               );
             })}
-          </div>
-          <p className="text-xs text-gray-500 mt-4 flex items-center gap-1">
-            <Plus className="w-3.5 h-3.5" /> Click any date to add a deadline (past or future). Sync to Google when
-            ready.
-          </p>
+          </div>          
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 min-h-[320px]">
           <h2 className="text-lg font-bold text-slate-900 mb-3">Your deadlines</h2>
           {loading ? (
             <p className="text-gray-500 text-sm">Loading…</p>
-          ) : events.length === 0 ? (
-            <p className="text-gray-500 text-sm">No deadlines yet. Add one from the calendar or analyze a document.</p>
+          ) : futureEvents.length === 0 ? (
+            <p className="text-gray-500 text-sm">No upcoming deadlines. Add one from the calendar or analyze a document.</p>
           ) : (
             <ul className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
-              {events.map((ev) => (
+              {futureEvents.map((ev) => (
                 <li
                   key={ev.event_id}
                   className="flex flex-col sm:flex-row sm:items-center gap-2 border border-gray-100 rounded-lg p-3 bg-slate-50/50"
@@ -326,11 +509,10 @@ const CalendarSync = () => {
                         {ev.event_date} {ev.event_time && <><Clock className="w-3 h-3 inline" /> {ev.event_time}</>}
                       </span>
                       <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                          ev.status === 'synced'
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${ev.status === 'synced'
                             ? 'bg-green-100 text-green-800'
                             : 'bg-gray-200 text-gray-700'
-                        }`}
+                          }`}
                       >
                         {ev.status || 'draft'}
                       </span>
@@ -377,59 +559,199 @@ const CalendarSync = () => {
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
-            <div className="flex justify-between items-start">
-              <h3 className="text-lg font-bold text-slate-900">New deadline</h3>
-              <button type="button" onClick={() => setModal(null)} className="p-1 rounded hover:bg-gray-100">
-                <X className="w-5 h-5" />
-              </button>
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex justify-between items-start gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">
+                  Deadlines on {modal.selectedDate}
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  View and edit deadlines for this day, or add a new one.
+                </p>
+              </div>
+
+              {error && (
+                <div className="rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
+                  {error}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            showAddForm: !prev.showAddForm,
+                          }
+                        : prev
+                    )
+                  }
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  New deadline
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModal(null)}
+                  className="p-1 rounded hover:bg-gray-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
-            <label className="block text-sm">
-              <span className="text-gray-600">Title</span>
-              <input
-                className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                value={modal.title}
-                onChange={(e) => setModal({ ...modal, title: e.target.value })}
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="text-gray-600">Date</span>
-              <input
-                type="date"
-                className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                value={modal.event_date}
-                onChange={(e) => setModal({ ...modal, event_date: e.target.value })}
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="text-gray-600">Time (24h)</span>
-              <input
-                type="time"
-                className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                value={modal.event_time}
-                onChange={(e) => setModal({ ...modal, event_time: e.target.value })}
-              />
-            </label>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setModal(null)}
-                className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-200 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busyId === 'new'}
-                onClick={saveNewEvent}
-                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                Save
-              </button>
-            </div>
+
+            {modal.showAddForm && (
+              <div className="border border-blue-200 rounded-xl p-4 bg-blue-50/50 space-y-4">
+                <h4 className="font-semibold text-slate-900">Add new deadline</h4>
+
+                <label className="block text-sm">
+                  <span className="text-gray-600">Title</span>
+                  <input
+                    className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                    value={modal.newItem.title}
+                    onChange={(e) => updateNewModalItem('title', e.target.value)}
+                  />
+                </label>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <label className="block text-sm">
+                    <span className="text-gray-600">Date</span>
+                    <input
+                      type="date"
+                      min={todayIso}
+                      className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                      value={modal.newItem.event_date}
+                      onChange={(e) => updateNewModalItem('event_date', e.target.value)}
+                    />
+                  </label>
+
+                  <label className="block text-sm">
+                    <span className="text-gray-600">Time (24h)</span>
+                    <input
+                      type="time"
+                      className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                      value={modal.newItem.event_time}
+                      onChange={(e) => updateNewModalItem('event_time', e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              showAddForm: false,
+                              newItem: {
+                                title: 'New deadline',
+                                event_date: prev.selectedDate < todayIso ? todayIso : prev.selectedDate,
+                                event_time: '09:00',
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-200 hover:bg-gray-50 bg-white"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={busyId === 'modal-new'}
+                    onClick={saveNewModalEvent}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {modal.items.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-gray-300 p-6 text-sm text-gray-500 text-center">
+                No deadlines on this date.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {modal.items.map((item) => (
+                  <div
+                    key={item.event_id}
+                    className="border border-gray-200 rounded-xl p-4 bg-slate-50/50"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-900">{item.title}</p>
+                        <span
+                          className={`inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                            item.status === 'synced'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-gray-200 text-gray-700'
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+
+                        {modalErrorFor === item.event_id && (
+                          <p className="mt-2 text-sm text-red-600">
+                            {modalError}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                      <label className="block text-sm">
+                        <span className="text-gray-600">Date</span>
+                        <input
+                          type="date"
+                          min={todayIso}
+                          className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          value={item.event_date}
+                          onChange={(e) =>
+                            updateModalEvent(item.event_id, 'event_date', e.target.value)
+                          }
+                        />
+                      </label>
+
+                      <label className="block text-sm">
+                        <span className="text-gray-600">Time (24h)</span>
+                        <input
+                          type="time"
+                          className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          value={item.event_time || '09:00'}
+                          onChange={(e) =>
+                            updateModalEvent(item.event_id, 'event_time', e.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="flex justify-end pt-4">
+                      <button
+                        type="button"
+                        disabled={busyId === `edit-${item.event_id}`}
+                        onClick={() => saveEditedEvent(item)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        Save changes
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      )}
+      )}      
     </div>
   );
 };
