@@ -52,14 +52,13 @@ const Auth = () => {
         }
 
       } else {
-        // --- REAL REGISTRATION LOGIC ---
+       
         await axios.post('http://127.0.0.1:8000/api/register', {
           name: name,
           email: email,
           password: password
         });
         
-        // NEW BEHAVIOR: Do not log them in. Show success, clear password, and switch to login.
         alert("Account created successfully! Please sign in to continue.");
         setPassword('');
         setIsLogin(true);
