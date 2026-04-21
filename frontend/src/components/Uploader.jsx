@@ -73,7 +73,8 @@ const Uploader = () => {
     formData.append('user_id', String(userId));
 
     try {
-      const response = await axios.post('http://127.0.0.1:8000/api/documents/analyze', formData, {
+      const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+      const response = await axios.post(`${API_URL}/api/documents/analyze`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 

@@ -27,11 +27,12 @@ const Auth = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
+    const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
 
     try {
       if (isLogin || isAdminMode) {
         // --- REAL LOGIN LOGIC ---
-        const response = await axios.post('http://127.0.0.1:8000/api/login', {
+        const response = await axios.post(`${API_URL}/api/login`, {
           email: email,
           password: password,
           is_admin: isAdminMode
@@ -53,7 +54,7 @@ const Auth = () => {
 
       } else {
        
-        await axios.post('http://127.0.0.1:8000/api/register', {
+        await axios.post(`${API_URL}/api/register`, {
           name: name,
           email: email,
           password: password

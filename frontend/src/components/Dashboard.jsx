@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import axios from 'axios';
 import DocumentAnalysisModal from './DocumentAnalysisModal';
 
-const API = 'http://127.0.0.1:8000';
+const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
 
 function riskToColor(level) {
   if (level === 'High') return 'text-red-600 bg-red-50 border-red-100';

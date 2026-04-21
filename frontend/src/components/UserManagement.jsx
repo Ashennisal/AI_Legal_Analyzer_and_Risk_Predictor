@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Search, MoreHorizontal } from 'lucide-react';
 import axios from 'axios';
 
+const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+
 const UserManagement = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -10,7 +12,7 @@ const UserManagement = () => {
   useEffect(() => {
     const fetchUsers = async () => {
       try {
-        const response = await axios.get('http://127.0.0.1:8000/api/admin/users');
+        const response = await axios.get(`${API_URL}/api/admin/users`);
         setUsers(response.data.users);
         setLoading(false);
       } catch (error) {
