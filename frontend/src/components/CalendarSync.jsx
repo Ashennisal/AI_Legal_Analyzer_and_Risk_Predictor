@@ -565,9 +565,6 @@ const CalendarSync = () => {
                 <h3 className="text-lg font-bold text-slate-900">
                   Deadlines on {modal.selectedDate}
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  View and edit deadlines for this day, or add a new one.
-                </p>
               </div>
 
               {error && (
@@ -690,8 +687,15 @@ const CalendarSync = () => {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-semibold text-slate-900">{item.title}</p>
+
+                        {modalErrorFor === item.event_id && (
+                          <p className="mt-1 text-sm text-red-600">
+                            {modalError}
+                          </p>
+                        )}
+
                         <span
-                          className={`inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                          className={`inline-block mt-2 px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
                             item.status === 'synced'
                               ? 'bg-green-100 text-green-800'
                               : 'bg-gray-200 text-gray-700'
@@ -699,12 +703,6 @@ const CalendarSync = () => {
                         >
                           {item.status}
                         </span>
-
-                        {modalErrorFor === item.event_id && (
-                          <p className="mt-2 text-sm text-red-600">
-                            {modalError}
-                          </p>
-                        )}
                       </div>
                     </div>
 
