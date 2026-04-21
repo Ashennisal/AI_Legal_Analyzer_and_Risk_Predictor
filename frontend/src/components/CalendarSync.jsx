@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Plus,
   X,
+  Pencil,
 } from 'lucide-react';
 import axios from 'axios';
 import { useUser } from '../context/UserContext';
@@ -54,9 +55,28 @@ function buildCalendarCells(year, monthIndex) {
   return cells;
 }
 
+
 const CalendarSync = () => {
   const { user } = useUser();
   const userId = user?.currentUser?.id;
+
+  const [syncToast, setSyncToast] = useState({
+  show: false,
+  type: "success", // "success" | "error"
+  message: "",
+});
+
+const showSyncToast = (message, type = "success") => {
+  setSyncToast({
+    show: true,
+    type,
+    message,
+  });
+
+  setTimeout(() => {
+    setSyncToast((prev) => ({ ...prev, show: false }));
+  }, 3500);
+};
 
   const [events, setEvents] = useState([]);
   const [warning, setWarning] = useState(null);
@@ -174,6 +194,31 @@ const CalendarSync = () => {
     });
   };
 
+  const openSingleEditModal = (ev) => {
+    setError(null);
+    setModalError('');
+    setModalErrorFor(null);
+
+    setModal({
+      selectedDate: ev.event_date,
+      items: [
+        {
+          event_id: ev.event_id,
+          title: ev.title || '',
+          event_date: ev.event_date || todayIso,
+          event_time: ev.event_time || '09:00',
+          status: ev.status || 'draft',
+        },
+      ],
+      showAddForm: false,
+      newItem: {
+        title: 'New deadline',
+        event_date: ev.event_date < todayIso ? todayIso : ev.event_date,
+        event_time: '09:00',
+      },
+    });
+  };
+
   const updateModalEvent = (eventId, field, value) => {
     setModal((prev) => {
       if (!prev) return prev;
@@ -192,6 +237,21 @@ const CalendarSync = () => {
   if (item.event_date < todayIso) {
     setModalError('⛔ You cannot move a deadline to a past date.');
     setModalErrorFor(item.event_id);
+    return;
+  }
+
+  const conflict = events.find(
+    (ev) =>
+      ev.event_id !== item.event_id &&
+      ev.event_date === item.event_date &&
+      ev.event_time === (item.event_time || '09:00')
+  );
+
+  if (conflict) {
+    showSyncToast(
+      `"${item.title}" could not sync.Another event already exists on this date and time`,
+      "error"
+    );
     return;
   }
 
@@ -316,19 +376,21 @@ const CalendarSync = () => {
 
 
   const sync = async (eventId) => {
-    // Check for conflict: another synced event on the same date AND time
-    const target = events.find(ev => ev.event_id === eventId);
+    const target = events.find((ev) => ev.event_id === eventId);
+
     if (target) {
-      const conflict = events.find(ev =>
-        ev.event_id !== eventId &&
-        ev.status === 'synced' &&
-        ev.event_date === target.event_date &&
-        ev.event_time === target.event_time
+      const conflict = events.find(
+        (ev) =>
+          ev.event_id !== eventId &&
+          ev.status === 'synced' &&
+          ev.event_date === target.event_date &&
+          ev.event_time === target.event_time
       );
+
       if (conflict) {
-        setError(
-          `⛔ Conflict: "${conflict.title}" is already synced to Google Calendar on ${target.event_date} at ${target.event_time}. ` +
-          `Please change the time of one of these deadlines before syncing.`
+        showSyncToast(
+          `"${target.title}" could not sync.Another event already exists on this date and time`,
+          "error"
         );
         return;
       }
@@ -336,12 +398,26 @@ const CalendarSync = () => {
 
     setBusyId(eventId);
     setError(null);
-    try {
-      await axios.post(`${API}/api/events/${eventId}/sync`, {}, { params: { user_id: userId } });
-      await load();
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message || 'Sync failed');
 
+    try {
+      await axios.post(
+        `${API}/api/events/${eventId}/sync`,
+        {},
+        { params: { user_id: userId } }
+      );
+
+      await load();
+
+      if (target) {
+        showSyncToast(`"${target.title}" synced to Google Calendar`, "success");
+      } else {
+        showSyncToast("Event synced to Google Calendar", "success");
+      }
+    } catch (e) {
+      showSyncToast(
+        e.response?.data?.detail || e.message || 'Sync failed',
+        "error"
+      );
     } finally {
       setBusyId(null);
     }
@@ -350,11 +426,21 @@ const CalendarSync = () => {
   const unsync = async (eventId) => {
     setBusyId(eventId);
     setError(null);
+
     try {
-      await axios.post(`${API}/api/events/${eventId}/unsync`, {}, { params: { user_id: userId } });
+      await axios.post(
+        `${API}/api/events/${eventId}/unsync`,
+        {},
+        { params: { user_id: userId } }
+      );
+
       await load();
+      showSyncToast("Deadline removed from Google Calendar", "success");
     } catch (e) {
-      setError(e.response?.data?.detail || e.message || 'Unsync failed');
+      showSyncToast(
+        e.response?.data?.detail || e.message || "Unsync failed",
+        "error"
+      );
     } finally {
       setBusyId(null);
     }
@@ -383,7 +469,7 @@ const CalendarSync = () => {
   }
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-8 animate-fade-in text-gray-800">
+    <div className="w-full px-2 py-6 space-y-8 animate-fade-in text-gray-800">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
@@ -429,7 +515,7 @@ const CalendarSync = () => {
         </div>
       )}
 
-      <div className="grid lg:grid-cols-2 gap-8">
+      <div className="grid lg:grid-cols-[1fr_1.3fr] gap-8">
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
           <div className="flex items-center justify-between mb-4">
             <button
@@ -540,6 +626,17 @@ const CalendarSync = () => {
                         Sync
                       </button>
                     )}
+
+                    <button
+                      type="button"
+                      disabled={busyId === ev.event_id}
+                      onClick={() => openSingleEditModal(ev)}
+                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium bg-white border border-gray-200 hover:bg-gray-50"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      Edit
+                    </button>
+
                     <button
                       type="button"
                       disabled={busyId === ev.event_id}
@@ -706,6 +803,17 @@ const CalendarSync = () => {
                       </div>
                     </div>
 
+                    <label className="block text-sm mt-4">
+                      <span className="text-gray-600">Title</span>
+                      <input
+                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                        value={item.title}
+                        onChange={(e) =>
+                          updateModalEvent(item.event_id, 'title', e.target.value)
+                        }
+                      />
+                    </label>      
+
                     <div className="grid sm:grid-cols-2 gap-4 mt-4">
                       <label className="block text-sm">
                         <span className="text-gray-600">Date</span>
@@ -749,7 +857,27 @@ const CalendarSync = () => {
             )}
           </div>
         </div>
-      )}      
+      )}
+
+      {syncToast.show && (
+        <div
+          className={`fixed top-5 right-5 z-[60] flex items-center gap-3 rounded-2xl px-6 py-4 shadow-2xl text-white min-w-[360px] max-w-[520px]
+            ${syncToast.type === "success" ? "bg-[#08142b]" : "bg-[#7f1d1d]"}`}
+        >
+          <div className="shrink-0">
+            {syncToast.type === "success" ? (
+              <CalendarIcon className="w-5 h-5" />
+            ) : (
+              <AlertCircle className="w-5 h-5" />
+            )}
+          </div>
+
+          <div className="text-sm font-medium leading-6">
+            {syncToast.message}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
