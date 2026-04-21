@@ -17,6 +17,6 @@ if not cred.exists():
     raise SystemExit(f"Place OAuth client JSON at: {cred}")
 
 flow = InstalledAppFlow.from_client_secrets_file(str(cred), SCOPES)
-creds = flow.run_local_server(port=0)
+creds = flow.run_local_server(port=1963, prompt='consent')
 tok.write_text(creds.to_json(), encoding="utf-8")
 print(f"Saved refresh token to {tok}")
