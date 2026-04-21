@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, FileText, AlertTriangle, Activity } from 'lucide-react';
+import { Users, FileText, AlertTriangle, Activity, RefreshCw } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
 
@@ -15,27 +15,47 @@ const AdminOverview = () => {
       { name: 'Thu', docs: 0 }, { name: 'Fri', docs: 0 }, { name: 'Sat', docs: 0 }, { name: 'Sun', docs: 0 }
     ]
   });
+  const [refreshing, setRefreshing] = useState(false);
 
   // Fetch real stats and chart data from the Python backend
+  const fetchStats = async () => {
+    try {
+      setRefreshing(true);
+      const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+      const response = await axios.get(`${API_URL}/api/admin/stats`);
+      setStats(response.data);
+      console.log("Admin stats refreshed:", response.data);
+    } catch (error) {
+      console.error("Error fetching stats:", error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const response = await axios.get('http://127.0.0.1:8000/api/admin/stats');
-        setStats(response.data);
-      } catch (error) {
-        console.error("Error fetching stats:", error);
-      }
-    };
     fetchStats();
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchStats, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-fade-in text-gray-800">
       
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Admin Overview</h1>
-        <p className="text-gray-500 mt-1">Platform-wide statistics and weekly activity.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Admin Overview</h1>
+          <p className="text-gray-500 mt-1">Platform-wide statistics and weekly activity.</p>
+        </div>
+        <button
+          onClick={fetchStats}
+          disabled={refreshing}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-all"
+        >
+          <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
       </div>
 
       {/* Top Stats Grid */}

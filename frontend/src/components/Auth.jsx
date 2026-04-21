@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, Shield, ArrowLeft, CheckCircle, MessageSquare, Calendar, Users, BarChart, FileSearch } from 'lucide-react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useUser } from '../context/UserContext';
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [isAdminMode, setIsAdminMode] = useState(false);
-  const [isLoading, setIsLoading] = useState(false); // Added loading state
+  const [isLoading, setIsLoading] = useState(false);
   
   // Controlled form inputs
   const [email, setEmail] = useState('');
@@ -27,11 +27,12 @@ const Auth = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
+    const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
 
     try {
       if (isLogin || isAdminMode) {
         // --- REAL LOGIN LOGIC ---
-        const response = await axios.post('http://127.0.0.1:8000/api/login', {
+        const response = await axios.post(`${API_URL}/api/login`, {
           email: email,
           password: password,
           is_admin: isAdminMode
@@ -52,14 +53,13 @@ const Auth = () => {
         }
 
       } else {
-        // --- REAL REGISTRATION LOGIC ---
-        await axios.post('http://127.0.0.1:8000/api/register', {
+       
+        await axios.post(`${API_URL}/api/register`, {
           name: name,
           email: email,
           password: password
         });
         
-        // NEW BEHAVIOR: Do not log them in. Show success, clear password, and switch to login.
         alert("Account created successfully! Please sign in to continue.");
         setPassword('');
         setIsLogin(true);
