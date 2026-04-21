@@ -9,7 +9,8 @@ const DocumentOversight = () => {
   useEffect(() => {
     const fetchDocuments = async () => {
       try {
-        const response = await axios.get('http://127.0.0.1:8000/api/admin/documents');
+        const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+        const response = await axios.get(`${API_URL}/api/admin/documents`);
         setDocuments(response.data.documents);
       } catch (error) {
         console.error("Failed to fetch documents:", error);
