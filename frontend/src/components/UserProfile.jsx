@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { User as UserIcon, Mail, Shield, FileText, AlertTriangle, AlertCircle, CheckCircle, HelpCircle, RefreshCw } from 'lucide-react';
+import { User as UserIcon, Mail, Shield, FileText, AlertTriangle, AlertCircle, CheckCircle, HelpCircle, RefreshCw, Edit2, Save, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { useUser } from '../context/UserContext.jsx';
@@ -51,13 +51,21 @@ const CATEGORY_META = {
 };
 
 const UserProfile = () => {
-  const { user } = useUser();
+  const { user, setUser, refreshUser } = useUser();
   const { currentUser } = user;
   const userId = currentUser?.id ?? 1;
 
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editData, setEditData] = useState({
+    name: currentUser?.name || '',
+    email: currentUser?.email || '',
+    password: ''
+  });
+  const [message, setMessage] = useState({ type: '', text: '' });
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -92,6 +100,110 @@ const UserProfile = () => {
     });
   };
 
+  const handleEditToggle = () => {
+    if (!isEditing) {
+      setEditData({
+        name: currentUser?.name || '',
+        email: currentUser?.email || '',
+        password: ''
+      });
+      setMessage({ type: '', text: '' });
+    }
+    setIsEditing(!isEditing);
+  };
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setEditData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    
+    // Validation
+    if (!editData.name.trim()) {
+      setMessage({ type: 'error', text: 'Name cannot be empty' });
+      return;
+    }
+    
+    if (!validateEmail(editData.email)) {
+      setMessage({ type: 'error', text: 'Please enter a valid email address' });
+      return;
+    }
+    
+    setIsSaving(true);
+    setMessage({ type: '', text: '' });
+
+    try {
+      // Validate password length if provided
+      if (editData.password && editData.password.length > 0 && editData.password.length < 6) {
+        setMessage({ type: 'error', text: 'Password must be at least 6 characters' });
+        setIsSaving(false);
+        return;
+      }
+
+      // Build request payload
+      const payload = {
+        name: editData.name.trim(),
+        email: editData.email.trim()
+      };
+      
+      if (editData.password && editData.password.length > 0) {
+        payload.password = editData.password;
+      }
+
+      const url = `${API}/api/users/${userId}`;
+      console.log('Calling PUT:', url, payload);
+      
+      // Make the API call using PUT with JSON body
+      const response = await axios.put(url, payload);
+      console.log('Success:', response.data);
+      
+      // Update user context with new data
+      const updatedUserData = {
+        ...currentUser,
+        name: editData.name.trim(),
+        email: editData.email.trim(),
+        initials: editData.name.trim().split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2)
+      };
+      
+      setUser({
+        ...user,
+        currentUser: updatedUserData
+      });
+      
+      setMessage({ type: 'success', text: 'Profile updated successfully!' });
+      setIsEditing(false);
+      setEditData(prev => ({ ...prev, password: '' }));
+      
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+    } catch (error) {
+      console.error('Full error:', error);
+      console.error('Response status:', error.response?.status);
+      console.error('Response data:', error.response?.data);
+      
+      let errorMsg = 'Failed to update profile. ';
+      if (error.response?.status === 404) {
+        errorMsg += 'Backend endpoint not found. Make sure backend is running on port 8001 with the /api/users/{user_id} endpoint.';
+      } else if (error.response?.status === 400) {
+        errorMsg += error.response.data?.detail || 'Invalid data provided.';
+      } else if (error.response?.status === 500) {
+        errorMsg += 'Server error. Check backend console for details.';
+      } else {
+        errorMsg += error.message;
+      }
+      
+      setMessage({ type: 'error', text: errorMsg });
+    } finally {
+      setIsSaving(false);
+    }
+};
+
   if (!currentUser) return null;
 
   return (
@@ -107,20 +219,101 @@ const UserProfile = () => {
         <div className="px-8 pb-8 relative">
           <div className="absolute -top-16 left-8 w-24 h-24 bg-white rounded-full p-1 shadow-md">
             <div className="w-full h-full bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-3xl font-black">
-              {currentUser.initials}
+              {currentUser.initials || currentUser.name?.substring(0, 2).toUpperCase() || 'U'}
             </div>
           </div>
 
           <div className="pt-12">
-            <h2 className="text-2xl font-bold text-slate-900">{currentUser.name}</h2>
-            <div className="flex flex-wrap items-center gap-4 mt-4 text-sm text-slate-600">
-              <span className="flex items-center gap-1.5">
-                <Mail className="w-4 h-4" /> {currentUser.email || 'user@example.com'}
-              </span>
-              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 rounded-full font-medium">
-                <Shield className="w-4 h-4 text-blue-500" /> {currentUser.role}
-              </span>
-            </div>
+            {isEditing ? (
+              <form onSubmit={handleSaveProfile} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    name="name"
+                    value={editData.name}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
+                    autoComplete="name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={editData.email}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
+                    autoComplete="email"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">New Password (Optional)</label>
+                  <input
+                    type="password"
+                    name="password"
+                    value={editData.password}
+                    onChange={handleInputChange}
+                    placeholder="Leave blank to keep current password"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    autoComplete="new-password"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Minimum 6 characters if you want to change password</p>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold transition-colors"
+                  >
+                    <Save className="w-4 h-4" />
+                    {isSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleEditToggle}
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 font-semibold transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">{currentUser.name}</h2>
+                  <div className="flex flex-wrap items-center gap-4 mt-4 text-sm text-slate-600">
+                    <span className="flex items-center gap-1.5">
+                      <Mail className="w-4 h-4" /> {currentUser.email || 'user@example.com'}
+                    </span>
+                    <span className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 rounded-full font-medium">
+                      <Shield className="w-4 h-4 text-blue-500" /> {currentUser.role || 'User'}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={handleEditToggle}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 font-semibold transition-colors"
+                >
+                  <Edit2 className="w-4 h-4" />
+                  Edit Profile
+                </button>
+              </div>
+            )}
+
+            {message.text && (
+              <div className={`mt-4 p-3 rounded-lg font-medium ${
+                message.type === 'success' 
+                  ? 'bg-green-100 text-green-700 border border-green-300' 
+                  : 'bg-red-100 text-red-700 border border-red-300'
+              }`}>
+                {message.text}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -141,7 +334,7 @@ const UserProfile = () => {
           <button
             type="button"
             onClick={() => loadDocuments()}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 border border-blue-100 rounded-lg hover:bg-blue-50"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 border border-blue-100 rounded-lg hover:bg-blue-50 transition-colors"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
@@ -220,7 +413,7 @@ const UserProfile = () => {
                           <button
                             type="button"
                             onClick={() => openDoc(doc)}
-                            className="shrink-0 px-4 py-2 text-sm font-semibold rounded-lg bg-slate-900 text-white hover:bg-slate-800"
+                            className="shrink-0 px-4 py-2 text-sm font-semibold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors"
                           >
                             Overview & highlights
                           </button>

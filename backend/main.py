@@ -8,6 +8,10 @@ import tempfile
 import os
 import json
 from datetime import datetime, timedelta
+from typing import Optional
+from password_utils import hash_password, verify_password, validate_password_strength
+from user_routes import router as user_router
+
 
 # Load backend/.env before any route uses os.getenv (GEMINI_API_KEY, MySQL, etc.)
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -18,8 +22,7 @@ from calendar_events_db import try_save_extracted_events
 from chat_routes import router as chat_router
 
 app = FastAPI(title="AI Legal Analyzer API")
-app.include_router(calendar_events_router, prefix="/api")
-app.include_router(chat_router, prefix="/api")
+app.include_router(user_router, prefix="/api")
 
 # Configure CORS so your React frontend can talk to this FastAPI backend
 app.add_middleware(
@@ -51,11 +54,108 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
 
-# --- API Endpoints ---
+# --- API Endpoints will be included from routers ---
 
 @app.get("/api/status")
 def read_status():
     return {"status": "success", "message": "FastAPI server is running perfectly!"}
+
+@app.post("/api/login")
+def login_user(request: LoginRequest, db = Depends(get_db)):
+    try:
+        cursor = db.cursor(dictionary=True)
+        
+        # Query the database for the user by email
+        cursor.execute("SELECT * FROM users WHERE email = %s", (request.email,))
+        user = cursor.fetchone()
+        cursor.close()
+
+        if not user:
+            print(f"[AUTH] Failed login attempt for {request.email}")
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        # Verify password using bcrypt
+        is_valid = verify_password(request.password, user['password'])
+        
+        if not is_valid:
+            print(f"[AUTH] Failed login attempt for {request.email} - wrong password")
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        # Check if they are trying to log into the correct portal
+        is_actually_admin = "Admin" in user['role']
+        if request.is_admin and not is_actually_admin:
+            raise HTTPException(status_code=403, detail="Access denied. You do not have admin privileges.")
+
+        print(f"[AUTH] User logged in: {request.email}")
+
+        # Return the real user data
+        return {
+            "message": "Login successful",
+            "user": {
+                "id": user['id'],
+                "name": user['name'],
+                "email": user['email'],
+                "initials": "".join([n[0] for n in user['name'].split()][:2]).upper(),
+                "role": user['role']
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] Login error: {e}")
+        raise HTTPException(status_code=500, detail=f"Login error: {str(e)}")
+
+@app.post("/api/register")
+def register_user(request: RegisterRequest, db = Depends(get_db)):
+    try:
+        # Validate password strength
+        password_validation = validate_password_strength(request.password)
+        if not password_validation["valid"]:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Password requirements not met: {'; '.join(password_validation['errors'])}"
+            )
+        
+        # Hash the password
+        hashed_password = hash_password(request.password)
+        
+        cursor = db.cursor()
+        
+        # Insert the new user into the database with hashed password
+        sql = "INSERT INTO users (name, email, password, role, status) VALUES (%s, %s, %s, 'User', 'Active')"
+        cursor.execute(sql, (request.name, request.email, hashed_password))
+        db.commit()
+        new_id = cursor.lastrowid
+        cursor.close()
+        
+        print(f"[AUTH] New user registered: {request.email} (ID: {new_id})")
+        
+        return {
+            "message": "Registration successful",
+            "user": {
+                "id": new_id,
+                "name": request.name,
+                "email": request.email,
+                "initials": "".join([n[0] for n in request.name.split()][:2]).upper(),
+                "role": "User"
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as err:
+        # Check for duplicate email (MySQL error 1062)
+        if "Duplicate entry" in str(err):
+            raise HTTPException(status_code=400, detail="Email already exists")
+        print(f"[ERROR] Registration error: {err}")
+        raise HTTPException(status_code=500, detail=f"Registration error: {str(err)}")
+
+
+
+# ============ INCLUDE ROUTERS (After user endpoints) ============
+app.include_router(calendar_events_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
+
+# ============ ADMIN ENDPOINTS ============
 
 @app.get("/api/admin/stats")
 def get_admin_stats(db = Depends(get_db)):
@@ -98,11 +198,10 @@ def get_admin_stats(db = Depends(get_db)):
             "totalUsers": total_users,
             "activeSessions": active_users,
             "totalDocuments": total_docs,
-            "avgRiskScore": "0/100", # Placeholder until AI runs
-            "weeklyData": weekly_data  # Send the real chart data to React!
+            "avgRiskScore": "0/100",
+            "weeklyData": weekly_data
         }
     except Exception as e:
-        # Return mock data if database is unavailable
         print(f"Database error in admin stats: {e}")
         return {
             "totalUsers": 5,
@@ -145,8 +244,6 @@ def get_all_users(db = Depends(get_db)):
         
         return {"users": users}
     except Exception as e:
-
-        # Return mock data if database is unavailable
         print(f"Database error in get users: {e}")
         return {"users": [
           {"id": 1, "name": "John Doe", "email": "john@example.com", "role": "User", "status": "Active", "last_active": "Mar 20, 2026", "initials": "JD", "docs": 3},
@@ -184,8 +281,6 @@ def get_platform_analytics(db = Depends(get_db)):
 
         print(f"[Analytics] Total clauses = {total_clauses}")
 
-        # Since we don't store exact clause names in the DB yet, we dynamically 
-        # distribute the real total count across common legal categories
         clause_data = [
             { "name": 'Confidentiality', "count": int(total_clauses * 0.35) or 1 },
             { "name": 'Indemnification', "count": int(total_clauses * 0.25) or 1 },
@@ -247,116 +342,6 @@ def get_all_documents(db = Depends(get_db)):
         print(f"Error fetching document oversight: {e}")
         return {"documents": []}
 
-@app.post("/api/login")
-def login_user(request: LoginRequest, db = Depends(get_db)):
-    try:
-        cursor = db.cursor(dictionary=True)
-        
-        # Query the database for the user by email and password
-        cursor.execute("SELECT * FROM users WHERE email = %s AND password = %s", (request.email, request.password))
-        user = cursor.fetchone()
-        cursor.close()
-
-        if not user:
-            print(f"[AUTH] Failed login attempt for {request.email}")
-            raise HTTPException(status_code=401, detail="Invalid email or password")
-        
-        # Check if they are trying to log into the correct portal
-        is_actually_admin = "Admin" in user['role']
-        if request.is_admin and not is_actually_admin:
-            raise HTTPException(status_code=403, detail="Access denied. You do not have admin privileges.")
-
-        print(f"[AUTH] User logged in: {request.email}")
-
-        # Return the real user data
-        return {
-            "message": "Login successful",
-            "user": {
-                "id": user['id'],
-                "name": user['name'],
-                "email": user['email'],
-                "initials": "".join([n[0] for n in user['name'].split()][:2]).upper(),
-                "role": user['role']
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[ERROR] Login error: {e}")
-        raise HTTPException(status_code=500, detail=f"Login error: {str(e)}")
-
-@app.post("/api/register")
-def register_user(request: RegisterRequest, db = Depends(get_db)):
-    try:
-        cursor = db.cursor()
-        
-        # Insert the new user into the database with plain-text password
-        sql = "INSERT INTO users (name, email, password, role, status) VALUES (%s, %s, %s, 'User', 'Active')"
-        cursor.execute(sql, (request.name, request.email, request.password))
-        db.commit()
-        new_id = cursor.lastrowid
-        cursor.close()
-        
-        print(f"[AUTH] New user registered: {request.email} (ID: {new_id})")
-        
-        return {
-            "message": "Registration successful",
-            "user": {
-                "id": new_id,
-                "name": request.name,
-                "email": request.email,
-                "initials": "".join([n[0] for n in request.name.split()][:2]).upper(),
-                "role": "User"
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as err:
-        cursor.close()
-        # Check for duplicate email (MySQL error 1062)
-        if "Duplicate entry" in str(err):
-            raise HTTPException(status_code=400, detail="Email already exists")
-        print(f"[ERROR] Registration error: {err}")
-        raise HTTPException(status_code=500, detail=f"Registration error: {str(err)}")
-
-# --- Password Management Endpoints ---
-
-class ChangePasswordRequest(BaseModel):
-    user_id: int
-    old_password: str
-    new_password: str
-
-@app.post("/api/change-password")
-def change_password(request: ChangePasswordRequest, db = Depends(get_db)):
-    """Allow users to change their password."""
-    try:
-        cursor = db.cursor(dictionary=True)
-        
-        # Get user
-        cursor.execute("SELECT * FROM users WHERE id = %s", (request.user_id,))
-        user = cursor.fetchone()
-        
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Verify old password
-        if request.old_password != user['password']:
-            raise HTTPException(status_code=401, detail="Current password is incorrect")
-        
-        # Update with new password
-        cursor.execute("UPDATE users SET password = %s WHERE id = %s", (request.new_password, request.user_id))
-        db.commit()
-        cursor.close()
-        
-        print(f"[AUTH] User {user['email']} changed password")
-        
-        return {"message": "Password changed successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[ERROR] Change password error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-
 @app.post("/api/admin/hash-existing-passwords")
 def hash_existing_passwords(db = Depends(get_db)):
     """Admin endpoint to convert plain-text passwords to hashed ones (RUN ONCE)."""
@@ -404,45 +389,9 @@ def hash_existing_passwords(db = Depends(get_db)):
         print(f"[ERROR] Password migration error: {e}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
-# --- Calendar Sync Endpoints ---
-
-@app.post("/api/calendar/extract")
-async def extract_calendar_events(file: UploadFile = File(...)):
-    """
-    Receives a DOCX file, extracts text, and uses Gemini to find calendar events.
-    """
-    from calendar_service import extract_events_with_gemini, read_docx_text
-    if not file.filename.endswith(".docx"):
-        raise HTTPException(status_code=400, detail="Only .docx files are supported")
-    
-    # Save the file temporarily
-    with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".docx") as temp_file:
-        content = await file.read()
-        temp_file.write(content)
-        temp_file_path = temp_file.name
-
-    try:
-        # Extract text using docx
-        text = read_docx_text(temp_file_path)
-        
-        # Extract events with Gemini
-        events = extract_events_with_gemini(text)
-        
-        return {"status": "success", "events": events}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error extracting events: {str(e)}")
-    finally:
-        # Cleanup temporary file
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-
-# --- User documents (dashboard) ---
+# ============ DOCUMENT ENDPOINTS ============
 
 def _normalize_stored_analysis_payload(parsed):
-    """
-    Stored JSON should match POST /api/documents/analyze response body (what the UI shows after upload).
-    Legacy rows only had { analysis, calendar_events } — normalize to the same shape.
-    """
     if not parsed:
         return None
     if isinstance(parsed, str):
@@ -470,7 +419,6 @@ def _normalize_stored_analysis_payload(parsed):
         }
     return None
 
-
 def _rows_to_document_list(rows, include_json_column: bool):
     out = []
     for r in rows:
@@ -495,10 +443,8 @@ def _rows_to_document_list(rows, include_json_column: bool):
         out.append(item)
     return out
 
-
 @app.get("/api/documents/my")
 def get_my_documents(user_id: int = 1, db = Depends(get_db)):
-    """Recent analyses for a user (dashboard). Run migrations/001_add_analysis_json.sql for full saved snapshots."""
     try:
         cursor = db.cursor(dictionary=True)
         try:
@@ -533,10 +479,8 @@ def get_my_documents(user_id: int = 1, db = Depends(get_db)):
         print(f"get_my_documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/documents/{document_id}")
 def get_document_by_id(document_id: int, user_id: int = 1, db = Depends(get_db)):
-    """Single saved analysis (must belong to user_id)."""
     try:
         cursor = db.cursor(dictionary=True)
         try:
@@ -574,9 +518,6 @@ def get_document_by_id(document_id: int, user_id: int = 1, db = Depends(get_db))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# --- Document Analysis Endpoint (Combines Risk & Calendar logic) ---
-
 @app.post("/api/documents/analyze")
 async def analyze_uploaded_document(
     file: UploadFile = File(...),
@@ -590,13 +531,11 @@ async def analyze_uploaded_document(
         safe_fn = (file.filename or "").lower()
         suffix = os.path.splitext(file.filename or "")[1] or ".bin"
 
-        # 1. Save file temporarily so the docx/pdf libraries can read it
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             content = await file.read()
             temp_file.write(content)
             temp_file_path = temp_file.name
 
-        # 2. Extract Text based on file type
         text = ""
         if safe_fn.endswith(".docx"):
             text = read_docx_text(temp_file_path)
@@ -609,20 +548,16 @@ async def analyze_uploaded_document(
 
         os.remove(temp_file_path)
 
-        # 3. Run Risk Analysis
         from risk_service import detect_risks
         risky_sentences, risky_phrases = detect_risks(text)
         clauses_detected = len(risky_sentences)
         risk_segments = build_risk_segments(text)
         
-        # Calculate Risk Score & Level based on findings
         risk_score = min(100, (clauses_detected * 10) + (len(risky_phrases) * 5))
         risk_level = "Low"
         if risk_score > 30: risk_level = "Medium"
         if risk_score > 70: risk_level = "High"
         
-        # 4. Gemini: one combined call by default (half the quota vs summaries + calendar separately).
-        # Set GEMINI_SEPARATE_CALLS=1 in .env to use two requests instead.
         if os.getenv("GEMINI_SEPARATE_CALLS", "").lower() in ("1", "true", "yes"):
             from calendar_service import extract_events_with_gemini
             from summarizer import summarize_document_with_gemini
@@ -710,16 +645,12 @@ async def analyze_uploaded_document(
 
 @app.post("/api/upload")
 async def upload_document(file: UploadFile = File(...), user_id: int = 1, db = Depends(get_db)):
-    """
-    Simple document upload endpoint that saves files and extracts basic metadata.
-    """
     if not file.filename.lower().endswith(('.docx', '.pdf', '.txt')):
         raise HTTPException(status_code=400, detail="Only DOCX, PDF, and TXT files are supported")
     
     try:
         content = await file.read()
         
-        # Extract text based on file type
         text = ""
         if file.filename.lower().endswith('.docx'):
             from docx import Document
@@ -735,18 +666,16 @@ async def upload_document(file: UploadFile = File(...), user_id: int = 1, db = D
                 pdf_reader = PyPDF2.PdfReader(pdf_file)
                 text = "\n".join([page.extract_text() for page in pdf_reader.pages])
             except ImportError:
-                # Fallback if PyPDF2 not available
                 text = "[PDF content - PyPDF2 library not installed]"
         else:
             text = content.decode('utf-8', errors='ignore')
         
-        # Save to database
         cursor = db.cursor()
         sql = """
             INSERT INTO documents (user_id, filename, content, uploaded_at) 
             VALUES (%s, %s, %s, %s)
         """
-        cursor.execute(sql, (user_id, file.filename, text[:10000], datetime.now()))  # Store first 10k chars
+        cursor.execute(sql, (user_id, file.filename, text[:10000], datetime.now()))
         db.commit()
         document_id = cursor.lastrowid
         cursor.close()
@@ -762,8 +691,68 @@ async def upload_document(file: UploadFile = File(...), user_id: int = 1, db = D
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading document: {str(e)}")
 
+@app.get("/api/debug/users")
+def get_all_users(db = Depends(get_db)):
+    """DEBUG: List all users in the database."""
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("SELECT id, name, email, role FROM users")
+        users = cursor.fetchall()
+        cursor.close()
+        print(f"[DEBUG] All users in database: {users}")
+        return { "users": users }
+    except Exception as e:
+        print(f"[ERROR] Debug error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.put("/api/update-profile/{user_id}")
+def update_profile_simple(user_id: int, name: str, email: str, password: Optional[str] = None, db = Depends(get_db)):
+    """Simple profile update endpoint using query parameters."""
+    try:
+        print(f"[DEBUG] Updating user {user_id}: name={name}, email={email}")
+        cursor = db.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+        if not cursor.fetchone():
+            cursor.close()
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Check if email is already used by another user
+        cursor.execute("SELECT id FROM users WHERE email = %s AND id != %s", (email, user_id))
+        if cursor.fetchone():
+            cursor.close()
+            raise HTTPException(status_code=400, detail="Email already in use")
+        
+        # Update the user
+        if password:
+            cursor.execute(
+                "UPDATE users SET name = %s, email = %s, password = %s WHERE id = %s",
+                (name, email, password, user_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE users SET name = %s, email = %s WHERE id = %s",
+                (name, email, user_id)
+            )
+        
+        db.commit()
+        cursor.close()
+        
+        print(f"[SUCCESS] User {user_id} updated to: {name}, {email}")
+        return {
+            "message": "Profile updated successfully", 
+            "user_id": user_id, 
+            "name": name, 
+            "email": email
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] Update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # This must always be at the bottom!
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

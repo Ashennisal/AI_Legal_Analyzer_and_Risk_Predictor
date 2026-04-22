@@ -60,7 +60,6 @@ const UserManagement = () => {
                 <th className="px-6 py-4">Documents</th>
                 <th className="px-6 py-4">Last Active</th>
                 <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -93,11 +92,6 @@ const UserManagement = () => {
                       }`}>
                         {user.status}
                       </span>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <button className="text-gray-400 hover:text-blue-600 p-1 rounded-md hover:bg-blue-50 transition-colors">
-                        <MoreHorizontal className="w-5 h-5" />
-                      </button>
                     </td>
                   </tr>
                 ))
