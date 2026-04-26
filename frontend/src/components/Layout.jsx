@@ -1,12 +1,17 @@
 import React from 'react';
-import { Shield, LayoutDashboard, UploadCloud, Calendar, User as UserIcon, LogOut, Bell, Users, BarChart2, FileText, Settings, MessageSquare } from 'lucide-react';
+import { Shield, LayoutDashboard, UploadCloud, Calendar, User as UserIcon, LogOut, Users, BarChart2, Settings, MessageSquare, Moon, Sun } from 'lucide-react';
 import { useLocation, Link, useNavigate, Navigate } from 'react-router-dom';
 import { useUser } from '../context/UserContext.jsx';
+import { useTheme } from '../context/ThemeContext.jsx';
+
+const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+
 const Layout = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, setUser } = useUser();
   const { currentUser } = user;
+  const { darkMode, toggleDarkMode } = useTheme();
 
   if (!currentUser) {
     return <Navigate to="/login" replace />;
@@ -32,7 +37,6 @@ const Layout = ({ children }) => {
     { name: 'Overview', path: '/admin', icon: LayoutDashboard },
     { name: 'User Management', path: '/admin/users', icon: Users },
     { name: 'Analytics', path: '/admin/analytics', icon: BarChart2 },
-    { name: 'Documents', path: '/admin/documents', icon: FileText },
     { name: 'Settings', path: '/admin/settings', icon: Settings },
   ];
 
@@ -46,7 +50,7 @@ const Layout = ({ children }) => {
   const isAssistantPage = location.pathname === '/assistant';
 
   return (
-    <div className="flex h-screen bg-gray-50 font-sans text-gray-800 relative">
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-800 dark:text-gray-100 relative transition-colors">
       
       {/* Sidebar */}
       <div className="w-64 text-white flex flex-col justify-between bg-[#0f172a] z-20">
@@ -54,8 +58,8 @@ const Layout = ({ children }) => {
           <div className="flex items-center gap-3 p-6">
             <Shield className={`w-8 h-8 ${isAdmin ? 'text-red-500' : 'text-blue-500'}`} />
             <div>
-              <h1 className="text-xl font-bold tracking-wide">{isAdmin ? 'Admin Portal' : 'AI Legal Analyzer'}</h1>
-              {isAdmin && <p className="text-xs text-slate-400">AI Legal Analyzer</p>}
+              <h1 className="text-xl font-bold tracking-wide">{isAdmin ? 'Admin Portal' : 'AI Medical Legal Analyser'}</h1>
+              {isAdmin && <p className="text-xs text-slate-400">AI Medical Legal Analyser</p>}
             </div>
           </div>
           <nav className="mt-4">
@@ -88,20 +92,46 @@ const Layout = ({ children }) => {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden z-10">
+      <div className="flex-1 flex flex-col overflow-hidden z-10 min-h-0">
         
         {/* Top Navigation */}
-        <header className="bg-white h-16 border-b border-gray-200 flex items-center justify-between px-8">
-          <div className="text-sm font-semibold text-gray-500 uppercase">{isAdmin ? 'Admin Portal' : 'User Dashboard'}</div>
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-3 border-l pl-6">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${isAdmin ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
+        <header className="bg-white dark:bg-gray-900 h-auto min-h-[4rem] border-b border-gray-200 dark:border-gray-800 flex items-center justify-end px-8 py-3 transition-colors">
+          <div className="flex items-start gap-3">
+            {currentUser.avatar_url ? (
+              <img
+                src={`${API_URL}${currentUser.avatar_url}`}
+                alt=""
+                className="w-8 h-8 shrink-0 rounded-full object-cover ring-2 ring-white dark:ring-gray-800"
+              />
+            ) : (
+              <div className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center font-bold ${isAdmin ? 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400' : 'bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400'}`}>
                 {currentUser.initials}
               </div>
+            )}
+            <div className="flex flex-col items-end gap-1.5 text-right">
               <div className="text-sm">
-                <p className="font-bold text-gray-800 leading-tight">{currentUser.name}</p>
-                <p className="text-gray-500 text-xs">{currentUser.role}</p>
+                <p className="font-bold text-gray-800 dark:text-gray-100 leading-tight">{currentUser.name}</p>
+                <p className="text-gray-500 dark:text-gray-400 text-xs">{currentUser.role}</p>
               </div>
+              <button
+                type="button"
+                onClick={toggleDarkMode}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-colors"
+                aria-pressed={darkMode}
+                aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {darkMode ? (
+                  <>
+                    <Sun className="w-3.5 h-3.5" />
+                    <span>Light mode</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3.5 h-3.5" />
+                    <span>Dark mode</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </header>
@@ -109,8 +139,8 @@ const Layout = ({ children }) => {
         <main
           className={
             isAssistantPage
-              ? 'flex-1 flex flex-col min-h-0 overflow-hidden p-0'
-              : 'flex-1 overflow-y-auto p-8'
+              ? 'flex-1 flex flex-col min-h-0 overflow-hidden p-0 dark:bg-gray-950'
+              : 'flex-1 overflow-y-auto p-8 dark:bg-gray-950'
           }
         >
           {children}

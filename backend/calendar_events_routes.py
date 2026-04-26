@@ -58,6 +58,100 @@ def event_exists(
     return cur.fetchone() is not None
 
 
+def synced_time_conflict(
+    cur,
+    user_id: int,
+    event_date: str,
+    event_time: str,
+    exclude_id: Optional[int] = None,
+) -> Optional[dict]:
+    if exclude_id is not None:
+        cur.execute(
+            """
+            SELECT event_id, title FROM Events
+            WHERE user_id=%s
+              AND status='synced'
+              AND event_date=%s
+              AND event_time=%s
+              AND event_id != %s
+            LIMIT 1
+            """,
+            (user_id, event_date, event_time, exclude_id),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT event_id, title FROM Events
+            WHERE user_id=%s
+              AND status='synced'
+              AND event_date=%s
+              AND event_time=%s
+            LIMIT 1
+            """,
+            (user_id, event_date, event_time),
+        )
+    return cur.fetchone()
+
+
+def refresh_deleted_google_events(db, user_id: int) -> list[int]:
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT event_id, google_event_id
+            FROM Events
+            WHERE user_id=%s AND status='synced' AND google_event_id IS NOT NULL
+            """,
+            (user_id,),
+        )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+
+    if not rows:
+        return []
+
+    try:
+        service = get_calendar_service()
+    except FileNotFoundError:
+        return []
+
+    deleted_event_ids = []
+    for row in rows:
+        try:
+            google_event = (
+                service.events()
+                .get(calendarId="primary", eventId=row["google_event_id"])
+                .execute()
+            )
+            if google_event.get("status") == "cancelled":
+                deleted_event_ids.append(row["event_id"])
+        except HttpError as e:
+            status = getattr(getattr(e, "resp", None), "status", None)
+            if status in {404, 410}:
+                deleted_event_ids.append(row["event_id"])
+
+    if not deleted_event_ids:
+        return []
+
+    cur = db.cursor()
+    try:
+        placeholders = ", ".join(["%s"] * len(deleted_event_ids))
+        cur.execute(
+            f"""
+            UPDATE Events
+            SET status='draft', google_event_id=NULL
+            WHERE user_id=%s AND event_id IN ({placeholders})
+            """,
+            (user_id, *deleted_event_ids),
+        )
+        db.commit()
+    finally:
+        cur.close()
+
+    return deleted_event_ids
+
+
 class StatusUpdate(BaseModel):
     status: str
 
@@ -216,6 +310,19 @@ def create_event(body: EventCreate, user_id: int = Query(1), db=Depends(get_db))
         cur.close()
 
 
+@router.post("/events/refresh-google-status")
+def refresh_google_status(user_id: int = Query(1), db=Depends(get_db)):
+    try:
+        changed_event_ids = refresh_deleted_google_events(db, user_id)
+        return {
+            "ok": True,
+            "changed_event_ids": changed_event_ids,
+            "status": "draft",
+        }
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=500, detail=f"Database update failed: {e}")
+
+
 @router.put("/events/{event_id}/status")
 def update_status(event_id: int, body: StatusUpdate, user_id: int = Query(1), db=Depends(get_db)):
     cur = db.cursor()
@@ -260,6 +367,22 @@ def sync_event_to_google(event_id: int, user_id: int = Query(1), db=Depends(get_
         date_str = ev["event_date"].isoformat() if ev["event_date"] else None
         time_hhmm = format_time(ev["event_time"]) or "09:00"
         google_event_id = ev.get("google_event_id")
+
+        conflict = synced_time_conflict(
+            cur,
+            user_id,
+            date_str,
+            time_hhmm,
+            exclude_id=event_id,
+        )
+        if conflict:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Another synced event already exists on this date and time. "
+                    "Change the time before syncing this deadline."
+                ),
+            )
 
         try:
             service = get_calendar_service()
@@ -367,34 +490,49 @@ def update_event(event_id: int, body: EventUpdate, user_id: int = Query(1), db=D
         if not row:
             raise HTTPException(status_code=404, detail="Event not found")
 
-        if event_exists(
+        conflict = synced_time_conflict(
             cur,
             user_id,
-            body.title,
             body.event_date,
             body.event_time,
             exclude_id=event_id,
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="An event with the same title, date, and time already exists",
-            )
+        )
 
         google_event_id = row.get("google_event_id")
+        keep_synced = bool(google_event_id) and conflict is None
 
         cur2 = db.cursor()
-        cur2.execute(
-            """
-            UPDATE Events
-            SET title=%s, event_date=%s, event_time=%s
-            WHERE event_id=%s AND user_id=%s
-            """,
-            (body.title, body.event_date, body.event_time, event_id, user_id),
-        )
+        if google_event_id and conflict:
+            cur2.execute(
+                """
+                UPDATE Events
+                SET title=%s, event_date=%s, event_time=%s, status='draft', google_event_id=NULL
+                WHERE event_id=%s AND user_id=%s
+                """,
+                (body.title, body.event_date, body.event_time, event_id, user_id),
+            )
+        else:
+            cur2.execute(
+                """
+                UPDATE Events
+                SET title=%s, event_date=%s, event_time=%s
+                WHERE event_id=%s AND user_id=%s
+                """,
+                (body.title, body.event_date, body.event_time, event_id, user_id),
+            )
         db.commit()
         cur2.close()
 
-        if google_event_id:
+        if google_event_id and conflict:
+            try:
+                service = get_calendar_service()
+                service.events().delete(
+                    calendarId="primary",
+                    eventId=google_event_id,
+                ).execute()
+            except (HttpError, FileNotFoundError):
+                pass
+        elif google_event_id:
             try:
                 service = get_calendar_service()
                 g_body = build_event_body(body.title, body.event_date, body.event_time)
@@ -410,7 +548,13 @@ def update_event(event_id: int, body: EventUpdate, user_id: int = Query(1), db=D
             "ok": True,
             "event_id": event_id,
             "updated": True,
-            "synced_updated": bool(google_event_id),
+            "synced_updated": keep_synced,
+            "unsynced_due_to_conflict": bool(google_event_id and conflict),
+            "status": (
+                "synced"
+                if keep_synced
+                else ("draft" if (google_event_id and conflict) else None)
+            ),
         }
 
     except HttpError as e:

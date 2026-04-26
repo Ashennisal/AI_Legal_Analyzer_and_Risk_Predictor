@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import MessageBubble from './MessageBubble';
 import ChatInput from './ChatInput';
-import { getHistory, sendMessage } from '../../services/chatApi';
+import { getHistory, sendMessage, getMyDocuments } from '../../services/chatApi';
 
 const ShareIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
@@ -15,10 +15,31 @@ const DotsIcon = () => (
   </svg>
 );
 
-export default function ChatWindow({ sessionId, currentSession, onSessionCreated, userId }) {
+export default function ChatWindow({ sessionId, currentSession, onSessionCreated, userId, linkedDocumentId = null }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [docList, setDocList] = useState([]);
+  const [contextDocumentId, setContextDocumentId] = useState(linkedDocumentId);
   const endRef = useRef(null);
+
+  useEffect(() => {
+    setContextDocumentId(linkedDocumentId);
+  }, [linkedDocumentId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const docs = await getMyDocuments(userId);
+        if (!cancelled) setDocList(Array.isArray(docs) ? docs : []);
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   useEffect(() => {
     const load = async () => {
@@ -51,7 +72,13 @@ export default function ChatWindow({ sessionId, currentSession, onSessionCreated
     setMessages(next);
     setLoading(true);
     try {
-      const { response, session_id: newSid } = await sendMessage(text, sessionId, file, userId);
+      const { response, session_id: newSid } = await sendMessage(
+        text,
+        sessionId,
+        file,
+        userId,
+        contextDocumentId,
+      );
       setMessages([...next, { text: response, isUser: false }]);
       if (!sessionId && newSid) onSessionCreated?.(newSid);
     } catch (e) {
@@ -147,7 +174,30 @@ export default function ChatWindow({ sessionId, currentSession, onSessionCreated
       </div>
 
       <div className="px-4 pb-5 pt-2 shrink-0">
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w-3xl mx-auto space-y-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <label htmlFor="chat-doc-context" className="shrink-0 font-medium">
+              Document context
+            </label>
+            <select
+              id="chat-doc-context"
+              value={contextDocumentId ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                setContextDocumentId(v === '' ? null : Number(v));
+              }}
+              disabled={loading}
+              className="flex-1 min-w-[12rem] max-w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5 text-xs text-gray-800 dark:text-gray-100"
+            >
+              <option value="">None — general chat</option>
+              {docList.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {(d.filename || 'Untitled').slice(0, 80)}
+                  {d.id != null ? ` (#${d.id})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
           <ChatInput onSend={handleSend} disabled={loading} />
           <p className="text-center text-[11px] text-gray-400 dark:text-gray-600 mt-2.5">
             AI can make mistakes. This is not legal advice — verify important information.

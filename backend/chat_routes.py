@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel
 
 from database import close_db_connection, get_db_connection
+from chat_document_context import fetch_document_context_for_chat
 from chat_gemini_service import get_gemini_response
 
 router = APIRouter(tags=["chat"])
@@ -42,6 +43,7 @@ async def chat(
     message: str = Form(...),
     session_id: Optional[int] = Form(None),
     file: Optional[UploadFile] = File(None),
+    document_id: Optional[int] = Form(None),
     user_id: int = Query(1, description="Logged-in user id"),
     db=Depends(get_db),
 ):
@@ -98,12 +100,22 @@ async def chat(
             with open(saved_path, "wb") as f:
                 f.write(file_bytes)
 
+        database_context = None
+        if document_id is not None:
+            ctx, ctx_err = fetch_document_context_for_chat(
+                db, user_id=user_id, document_id=document_id
+            )
+            if ctx_err:
+                raise HTTPException(status_code=400, detail=ctx_err)
+            database_context = ctx
+
         try:
             response_text = get_gemini_response(
                 history_contents,
                 message,
                 file_bytes=file_bytes,
                 mime_type=mime_type,
+                database_context=database_context,
             )
         except RuntimeError as e:
             raise HTTPException(status_code=503, detail=str(e))

@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+DEFAULT_CALENDAR_TZ = "Asia/Colombo"
 
 _BACKEND = Path(__file__).resolve().parent
 CREDENTIALS_PATH = _BACKEND / "credentials.json"
@@ -56,13 +58,31 @@ def get_calendar_service():
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
+def _resolve_timezone():
+    """
+    Windows often has no IANA DB until `tzdata` is installed (pip install tzdata).
+    Try CALENDAR_TZ / default / UTC so sync never raises ZoneInfoNotFoundError.
+    """
+    preferred = os.getenv("CALENDAR_TZ", DEFAULT_CALENDAR_TZ)
+    for candidate in (preferred, DEFAULT_CALENDAR_TZ, "UTC"):
+        try:
+            return ZoneInfo(candidate), candidate
+        except ZoneInfoNotFoundError:
+            continue
+    # If no IANA data (e.g. tzdata not installed), use fixed UTC.
+    return timezone.utc, "UTC"
+
+
 def build_event_body(title: str, date_str: str, time_hhmm: str) -> dict:
-    """Single timed event (1 hour) in UTC for the given local calendar date/time strings."""
-    start = datetime.strptime(f"{date_str} {time_hhmm}", "%Y-%m-%d %H:%M")
+    """Single timed event (1 hour) for the selected local calendar date/time."""
+    tz, tz_name = _resolve_timezone()
+
+    start = datetime.strptime(f"{date_str} {time_hhmm}", "%Y-%m-%d %H:%M").replace(
+        tzinfo=tz
+    )
     end = start + timedelta(hours=1)
-    tz = os.getenv("CALENDAR_TZ", "UTC")
     return {
         "summary": title,
-        "start": {"dateTime": start.isoformat(), "timeZone": tz},
-        "end": {"dateTime": end.isoformat(), "timeZone": tz},
+        "start": {"dateTime": start.isoformat(), "timeZone": tz_name},
+        "end": {"dateTime": end.isoformat(), "timeZone": tz_name},
     }

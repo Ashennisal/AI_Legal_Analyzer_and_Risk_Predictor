@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import ChatWindow from './ChatWindow';
 import ChatSidebar from './ChatSidebar';
 import { useUser } from '../../context/UserContext.jsx';
@@ -8,6 +9,11 @@ import { deleteSession, getSessions, renameSession } from '../../services/chatAp
  * Full-screen chat UI (sidebar + main) modeled after the SLIIT my_ai_assistant_project frontend.
  */
 export default function LegalChatAssistant() {
+  const [searchParams] = useSearchParams();
+  const docParam = searchParams.get('documentId');
+  const linkedDocumentId =
+    docParam != null && docParam !== '' && !Number.isNaN(Number(docParam)) ? Number(docParam) : null;
+
   const { user } = useUser();
   const userId = user?.currentUser?.id ?? 1;
 
@@ -88,6 +94,7 @@ export default function LegalChatAssistant() {
           fetchSessions();
         }}
         userId={userId}
+        linkedDocumentId={linkedDocumentId}
       />
     </div>
   );

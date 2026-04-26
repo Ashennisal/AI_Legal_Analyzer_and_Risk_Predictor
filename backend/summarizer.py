@@ -132,19 +132,19 @@ DOCUMENT:
     try:
         response = _generate(client, model, prompt)
     except Exception as e:
-        print(f"⚠ summarize API error ({model}): {e}")
+        print(f"[WARN] summarize API error ({model}): {e}")
         return None
 
     raw_text = _model_text(response)
     if not raw_text.strip():
-        print(f"⚠ summarize: empty model text ({model}). {_finish_debug(response)}")
+        print(f"[WARN] summarize: empty model text ({model}). {_finish_debug(response)}")
         return None
 
     try:
         blob = _extract_json_object(raw_text)
         data = json.loads(blob)
     except Exception as e:
-        print(f"⚠ summarize JSON parse failed ({model}): {e}")
+        print(f"[WARN] summarize JSON parse failed ({model}): {e}")
         print(f"   (first 400 chars): {raw_text[:400]!r}")
         return None
 
@@ -169,21 +169,23 @@ def summarize_document_with_gemini(
     try:
         from google import genai
     except ImportError:
-        print("⚠ summarize: google-genai not installed")
+        print("[WARN] summarize: google-genai not installed")
         return empty
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("⚠ summarize: GEMINI_API_KEY not set (check backend/.env)")
+        print("[WARN] summarize: GEMINI_API_KEY not set (check backend/.env)")
         return empty
 
-    primary = (
+    from gemini_fallback import normalize_model_id
+
+    primary = normalize_model_id(
         model
         or os.getenv("GEMINI_SUMMARY_MODEL")
         or os.getenv("GEMINI_MODEL")
-        or "gemini-2.5-flash"
-    )
-    fallback = os.getenv("GEMINI_SUMMARY_MODEL_FALLBACK", "gemini-2.0-flash")
+        or "gemini-2.5-flash",
+    ) or "gemini-2.5-flash"
+    fallback = normalize_model_id(os.getenv("GEMINI_SUMMARY_MODEL_FALLBACK", "gemini-2.0-flash")) or "gemini-2.0-flash"
 
     client = genai.Client(
         api_key=api_key,

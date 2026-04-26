@@ -6,6 +6,8 @@ import tempfile
 from google import genai
 from google.genai import types
 
+from gemini_fallback import normalize_model_id
+
 NON_MEDICAL_TOKEN = "##NONMEDICAL##"
 
 NON_MEDICAL_RESPONSE = (
@@ -21,6 +23,14 @@ NON_MEDICAL_RESPONSE = (
     "✅ Please upload a **valid medical document or image** and I'll be happy to help you "
     "understand it and answer any health-related questions! 😊"
 )
+_SYSTEM_INSTRUCTION_LEGAL_DB = (
+    "You are an AI assistant helping with questions about the user's analyzed legal or commercial documents.\n"
+    "REFERENCE MATERIAL below was loaded from the application's database (stored summaries, benchmark notes, "
+    "deadlines, and extracted text). Prefer that material when answering about this document. "
+    "If the answer is not supported by the reference material, say so clearly.\n"
+    "This is not legal advice; encourage consulting a qualified attorney for legal decisions.\n"
+)
+
 _SYSTEM_INSTRUCTION = (
     "You are an AI medical assistant that ONLY helps with medical and health-related documents and questions.\n\n"
     "IMPORTANT RULE — When the user uploads a file:\n"
@@ -73,13 +83,17 @@ def get_gemini_response(
     file_bytes: bytes | None = None,
     mime_type: str | None = None,
     model: str = "gemini-2.5-flash",
+    database_context: str | None = None,
 ) -> str:
     """
     history_contents: list of {"role": "user"|"model", "parts": [{"text": "..."}, ...]}
     Appends one final user turn with optional file + prompt.
-    If a non-medical file is uploaded, Gemini returns ##NONMEDICAL## which we swap for
-    the beautiful rejection message.
+    If database_context is set, the model uses stored document analysis from the DB.
+    If a non-medical file is uploaded (no DB context), Gemini may return ##NONMEDICAL## which we swap for
+    the rejection message.
     """
+    model = normalize_model_id(model) or "gemini-2.5-flash"
+
     client = _client_singleton()
     contents: list = []
 
@@ -101,7 +115,14 @@ def get_gemini_response(
         if file_part:
             parts.append(file_part)
 
-    full_prompt = f"{_SYSTEM_INSTRUCTION}\n\nUser question:\n{prompt}"
+    if database_context and database_context.strip():
+        full_prompt = (
+            f"{_SYSTEM_INSTRUCTION_LEGAL_DB}\n\n"
+            f"REFERENCE MATERIAL (from database):\n{database_context.strip()}\n\n"
+            f"---\n\nUser question:\n{prompt}"
+        )
+    else:
+        full_prompt = f"{_SYSTEM_INSTRUCTION}\n\nUser question:\n{prompt}"
     parts.append(types.Part.from_text(text=full_prompt))
 
     contents.append(types.Content(role="user", parts=parts))
@@ -109,7 +130,7 @@ def get_gemini_response(
     try:
         response = client.models.generate_content(model=model, contents=contents)
         text = (response.text or "").strip()
-        if NON_MEDICAL_TOKEN in text:
+        if NON_MEDICAL_TOKEN in text and not (database_context and database_context.strip()):
             print("[Chat] Non-medical document detected — returning rejection message.")
             return NON_MEDICAL_RESPONSE
         return text or "I could not generate a response. Please try again."

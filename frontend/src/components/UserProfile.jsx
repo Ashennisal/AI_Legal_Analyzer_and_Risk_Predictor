@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { User as UserIcon, Mail, Shield, FileText, AlertTriangle, AlertCircle, CheckCircle, HelpCircle, RefreshCw, Edit2, Save, X } from 'lucide-react';
+import { Mail, Shield, FileText, AlertTriangle, AlertCircle, CheckCircle, HelpCircle, RefreshCw, Pencil, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { useUser } from '../context/UserContext.jsx';
 import DocumentAnalysisModal from './DocumentAnalysisModal.jsx';
 
-const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
 const RISK_ORDER = ['High', 'Medium', 'Low', 'Uncategorized'];
 
@@ -51,21 +51,19 @@ const CATEGORY_META = {
 };
 
 const UserProfile = () => {
-  const { user, setUser, refreshUser } = useUser();
+  const { user, setUser } = useUser();
   const { currentUser } = user;
   const userId = currentUser?.id ?? 1;
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarPreview, setAvatarPreview] = useState(null);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [editData, setEditData] = useState({
-    name: currentUser?.name || '',
-    email: currentUser?.email || '',
-    password: ''
-  });
-  const [message, setMessage] = useState({ type: '', text: '' });
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -86,6 +84,55 @@ const UserProfile = () => {
     loadDocuments();
   }, [loadDocuments]);
 
+  useEffect(() => {
+    if (currentUser?.name) setNameDraft(currentUser.name);
+  }, [currentUser?.name]);
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(avatarFile);
+    setAvatarPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [avatarFile]);
+
+  const cancelEdit = () => {
+    setEditOpen(false);
+    setAvatarFile(null);
+    setAvatarPreview(null);
+    if (currentUser?.name) setNameDraft(currentUser.name);
+  };
+
+  const saveProfile = async (e) => {
+    e.preventDefault();
+    const fd = new FormData();
+    const trimmed = nameDraft.trim();
+    if (trimmed) fd.append('name', trimmed);
+    if (avatarFile) fd.append('avatar', avatarFile);
+    if (!fd.has('name') && !fd.has('avatar')) {
+      alert('Change your name or choose a new profile photo.');
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      const { data } = await axios.put(`${API}/api/profile?user_id=${userId}`, fd);
+      setUser({ ...user, currentUser: data.user });
+      setEditOpen(false);
+      setAvatarFile(null);
+      setAvatarPreview(null);
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message || 'Could not update profile');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const avatarSrc =
+    avatarPreview ||
+    (currentUser?.avatar_url ? `${API}${currentUser.avatar_url}` : null);
+
   const grouped = useMemo(() => groupDocumentsByRisk(documents), [documents]);
 
   const openDoc = (doc) => {
@@ -100,110 +147,6 @@ const UserProfile = () => {
     });
   };
 
-  const handleEditToggle = () => {
-    if (!isEditing) {
-      setEditData({
-        name: currentUser?.name || '',
-        email: currentUser?.email || '',
-        password: ''
-      });
-      setMessage({ type: '', text: '' });
-    }
-    setIsEditing(!isEditing);
-  };
-
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setEditData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const validateEmail = (email) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
-
-  const handleSaveProfile = async (e) => {
-    e.preventDefault();
-    
-    // Validation
-    if (!editData.name.trim()) {
-      setMessage({ type: 'error', text: 'Name cannot be empty' });
-      return;
-    }
-    
-    if (!validateEmail(editData.email)) {
-      setMessage({ type: 'error', text: 'Please enter a valid email address' });
-      return;
-    }
-    
-    setIsSaving(true);
-    setMessage({ type: '', text: '' });
-
-    try {
-      // Validate password length if provided
-      if (editData.password && editData.password.length > 0 && editData.password.length < 6) {
-        setMessage({ type: 'error', text: 'Password must be at least 6 characters' });
-        setIsSaving(false);
-        return;
-      }
-
-      // Build request payload
-      const payload = {
-        name: editData.name.trim(),
-        email: editData.email.trim()
-      };
-      
-      if (editData.password && editData.password.length > 0) {
-        payload.password = editData.password;
-      }
-
-      const url = `${API}/api/users/${userId}`;
-      console.log('Calling PUT:', url, payload);
-      
-      // Make the API call using PUT with JSON body
-      const response = await axios.put(url, payload);
-      console.log('Success:', response.data);
-      
-      // Update user context with new data
-      const updatedUserData = {
-        ...currentUser,
-        name: editData.name.trim(),
-        email: editData.email.trim(),
-        initials: editData.name.trim().split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2)
-      };
-      
-      setUser({
-        ...user,
-        currentUser: updatedUserData
-      });
-      
-      setMessage({ type: 'success', text: 'Profile updated successfully!' });
-      setIsEditing(false);
-      setEditData(prev => ({ ...prev, password: '' }));
-      
-      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
-    } catch (error) {
-      console.error('Full error:', error);
-      console.error('Response status:', error.response?.status);
-      console.error('Response data:', error.response?.data);
-      
-      let errorMsg = 'Failed to update profile. ';
-      if (error.response?.status === 404) {
-        errorMsg += 'Backend endpoint not found. Make sure backend is running on port 8001 with the /api/users/{user_id} endpoint.';
-      } else if (error.response?.status === 400) {
-        errorMsg += error.response.data?.detail || 'Invalid data provided.';
-      } else if (error.response?.status === 500) {
-        errorMsg += 'Server error. Check backend console for details.';
-      } else {
-        errorMsg += error.message;
-      }
-      
-      setMessage({ type: 'error', text: errorMsg });
-    } finally {
-      setIsSaving(false);
-    }
-};
-
   if (!currentUser) return null;
 
   return (
@@ -217,102 +160,101 @@ const UserProfile = () => {
         <div className="h-32 bg-slate-900" />
 
         <div className="px-8 pb-8 relative">
-          <div className="absolute -top-16 left-8 w-24 h-24 bg-white rounded-full p-1 shadow-md">
-            <div className="w-full h-full bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-3xl font-black">
-              {currentUser.initials || currentUser.name?.substring(0, 2).toUpperCase() || 'U'}
-            </div>
+          <div className="absolute -top-16 left-8 w-24 h-24 bg-white dark:bg-gray-800 rounded-full p-1 shadow-md overflow-hidden">
+            {avatarSrc ? (
+              <img src={avatarSrc} alt="" className="w-full h-full rounded-full object-cover" />
+            ) : (
+              <div className="w-full h-full bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-3xl font-black">
+                {currentUser.initials}
+              </div>
+            )}
           </div>
 
           <div className="pt-12">
-            {isEditing ? (
-              <form onSubmit={handleSaveProfile} className="space-y-4">
+            {!editOpen ? (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <h2 className="text-2xl font-bold text-slate-900">{currentUser.name}</h2>
+                  <button
+                    type="button"
+                    onClick={() => setEditOpen(true)}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg border border-gray-200 text-slate-700 hover:bg-gray-50"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    Edit profile
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-4 mt-4 text-sm text-slate-600">
+                  <span className="flex items-center gap-1.5">
+                    <Mail className="w-4 h-4" /> {currentUser.email || 'user@example.com'}
+                  </span>
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 rounded-full font-medium">
+                    <Shield className="w-4 h-4 text-blue-500" /> {currentUser.role}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <form onSubmit={saveProfile} className="space-y-4 max-w-md">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-lg font-bold text-slate-900">Edit profile</h2>
+                  <button
+                    type="button"
+                    onClick={cancelEdit}
+                    className="p-1.5 rounded-lg text-slate-500 hover:bg-gray-100"
+                    aria-label="Cancel editing"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">Full Name</label>
+                  <label htmlFor="profile-name" className="block text-sm font-bold text-slate-700 mb-1.5">
+                    Display name
+                  </label>
                   <input
+                    id="profile-name"
                     type="text"
-                    name="name"
-                    value={editData.name}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                     autoComplete="name"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">Email Address</label>
+                  <label htmlFor="profile-photo" className="block text-sm font-bold text-slate-700 mb-1.5">
+                    Profile photo
+                  </label>
                   <input
-                    type="email"
-                    name="email"
-                    value={editData.email}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                    autoComplete="email"
+                    id="profile-photo"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      setAvatarFile(f || null);
+                    }}
+                    className="block w-full text-sm text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border file:border-gray-200 file:bg-white file:text-sm file:font-medium"
                   />
+                  <p className="text-xs text-gray-500 mt-1">JPG, PNG, WebP, or GIF — max 2 MB.</p>
                 </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">New Password (Optional)</label>
-                  <input
-                    type="password"
-                    name="password"
-                    value={editData.password}
-                    onChange={handleInputChange}
-                    placeholder="Leave blank to keep current password"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    autoComplete="new-password"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Minimum 6 characters if you want to change password</p>
-                </div>
-                <div className="flex gap-3 pt-2">
+                <div className="flex flex-wrap gap-2 pt-2">
                   <button
                     type="submit"
-                    disabled={isSaving}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold transition-colors"
+                    disabled={savingProfile}
+                    className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
                   >
-                    <Save className="w-4 h-4" />
-                    {isSaving ? 'Saving...' : 'Save Changes'}
+                    {savingProfile ? 'Saving…' : 'Save changes'}
                   </button>
                   <button
                     type="button"
-                    onClick={handleEditToggle}
-                    className="flex items-center gap-2 px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 font-semibold transition-colors"
+                    onClick={cancelEdit}
+                    className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-slate-700 hover:bg-gray-50"
                   >
-                    <X className="w-4 h-4" />
                     Cancel
                   </button>
                 </div>
+                <p className="text-xs text-gray-500">
+                  Email and role are managed by your administrator.
+                </p>
               </form>
-            ) : (
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-900">{currentUser.name}</h2>
-                  <div className="flex flex-wrap items-center gap-4 mt-4 text-sm text-slate-600">
-                    <span className="flex items-center gap-1.5">
-                      <Mail className="w-4 h-4" /> {currentUser.email || 'user@example.com'}
-                    </span>
-                    <span className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 rounded-full font-medium">
-                      <Shield className="w-4 h-4 text-blue-500" /> {currentUser.role || 'User'}
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={handleEditToggle}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 font-semibold transition-colors"
-                >
-                  <Edit2 className="w-4 h-4" />
-                  Edit Profile
-                </button>
-              </div>
-            )}
-
-            {message.text && (
-              <div className={`mt-4 p-3 rounded-lg font-medium ${
-                message.type === 'success' 
-                  ? 'bg-green-100 text-green-700 border border-green-300' 
-                  : 'bg-red-100 text-red-700 border border-red-300'
-              }`}>
-                {message.text}
-              </div>
             )}
           </div>
         </div>
@@ -334,7 +276,7 @@ const UserProfile = () => {
           <button
             type="button"
             onClick={() => loadDocuments()}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 border border-blue-100 rounded-lg hover:bg-blue-50 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 border border-blue-100 rounded-lg hover:bg-blue-50"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
@@ -413,7 +355,7 @@ const UserProfile = () => {
                           <button
                             type="button"
                             onClick={() => openDoc(doc)}
-                            className="shrink-0 px-4 py-2 text-sm font-semibold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors"
+                            className="shrink-0 px-4 py-2 text-sm font-semibold rounded-lg bg-slate-900 text-white hover:bg-slate-800"
                           >
                             Overview & highlights
                           </button>

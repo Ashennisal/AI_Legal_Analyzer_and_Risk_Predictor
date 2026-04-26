@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Mail, Lock, User, Shield, ArrowLeft, CheckCircle, MessageSquare, Calendar, Users, BarChart, FileSearch } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
+import { Mail, Lock, User, Shield, ArrowLeft, CheckCircle, MessageSquare, Calendar, Users, BarChart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useUser } from '../context/UserContext';
+import { useTheme } from '../context/ThemeContext.jsx';
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -16,6 +17,17 @@ const Auth = () => {
 
   const navigate = useNavigate();
   const { user, setUser } = useUser();
+  const { darkMode } = useTheme();
+
+  /* Login route always renders in light mode; restore saved theme when leaving. */
+  useLayoutEffect(() => {
+    document.documentElement.classList.remove('dark');
+    return () => {
+      if (darkMode) {
+        document.documentElement.classList.add('dark');
+      }
+    };
+  }, [darkMode]);
 
   useEffect(() => {
     if (!user?.currentUser) return;
@@ -27,7 +39,7 @@ const Auth = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
-    const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+    const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
     try {
       if (isLogin || isAdminMode) {
@@ -137,13 +149,6 @@ const Auth = () => {
                   <div>
                     <h3 className="font-bold text-white">Platform Analytics</h3>
                     <p className="text-slate-400 text-sm">Track document uploads, risk scores, and usage trends.</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-4">
-                  <div className="p-2 bg-slate-800 rounded-lg"><FileSearch className="w-5 h-5 text-red-400" /></div>
-                  <div>
-                    <h3 className="font-bold text-white">Document Oversight</h3>
-                    <p className="text-slate-400 text-sm">Monitor all analyzed documents and flagged content.</p>
                   </div>
                 </div>
               </div>

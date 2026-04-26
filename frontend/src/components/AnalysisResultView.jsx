@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, ShieldAlert, BookOpen, Highlighter } from 'lucide-react';
+import { Calendar, ShieldAlert, BookOpen, Highlighter, Scale, CheckCircle2, ListChecks } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const RISK_LEVEL_CLASS = {
@@ -18,9 +18,14 @@ export default function AnalysisResultView({
   filename,
   summaries = null,
   showDashboardLink = false,
+  benchmark: storedBenchmark = null,
 }) {
   const [summaryTab, setSummaryTab] = useState('technical');
   const [viewTab, setViewTab] = useState('overview');
+  const benchmarkStatus = storedBenchmark?.status || (storedBenchmark ? 'error' : 'missing');
+  const benchmarkErrorMessage =
+    storedBenchmark?.confidence_note || 'Benchmarking is currently unavailable for this analysis.';
+
 
   const riskSegments = analysis?.risk_segments;
   const hasRiskSegments = Array.isArray(riskSegments) && riskSegments.length > 0;
@@ -66,6 +71,18 @@ export default function AnalysisResultView({
         >
           <Highlighter className="w-4 h-4" />
           Highlighted document
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewTab('benchmarking')}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors inline-flex items-center gap-2 ${
+            viewTab === 'benchmarking'
+              ? 'bg-slate-800 text-white shadow-sm'
+              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <Scale className="w-4 h-4" />
+          Benchmarking
         </button>
       </div>
 
@@ -195,6 +212,54 @@ export default function AnalysisResultView({
         </div>
       </div>
         </>
+      )}
+      {viewTab === 'benchmarking' && (
+        <div className="space-y-4">
+          {!storedBenchmark ? (
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-600">
+              No saved benchmark for this analysis. Re-run Analyze to generate one.
+            </div>
+          ) : benchmarkStatus !== 'success' ? (
+            <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900">
+              <p className="font-semibold mb-1">Benchmark unavailable for this run</p>
+              <p>{benchmarkErrorMessage}</p>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-slate-50 p-6 shadow-sm">
+                <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm mb-2">
+                  <CheckCircle2 className="w-5 h-5" />
+                  Alignment with common practice
+                </div>
+                {storedBenchmark.alignment_score != null && (
+                  <p className="text-4xl font-black text-emerald-700">
+                    {storedBenchmark.alignment_score}
+                    <span className="text-xl font-bold text-emerald-600">/100</span>
+                  </p>
+                )}
+                {storedBenchmark.reassurance_summary && (
+                  <p className="text-sm text-slate-700 mt-4 leading-relaxed">{storedBenchmark.reassurance_summary}</p>
+                )}
+              </div>
+              {Array.isArray(storedBenchmark.similarities) && storedBenchmark.similarities.length > 0 && (
+                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                  <div className="flex items-center gap-2 mb-4 text-slate-900 font-bold">
+                    <ListChecks className="w-5 h-5 text-indigo-600" />
+                    Similarities to industry-standard patterns
+                  </div>
+                  <ul className="space-y-3">
+                    {storedBenchmark.similarities.map((item, idx) => (
+                      <li key={idx} className="border-l-4 border-indigo-200 pl-4 py-1 text-sm text-slate-700">
+                        <p className="font-semibold text-slate-900">{item.title || 'Theme'}</p>
+                        {item.detail && <p className="mt-1 leading-relaxed">{item.detail}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   );

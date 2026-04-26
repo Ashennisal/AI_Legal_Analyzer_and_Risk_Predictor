@@ -1,6 +1,7 @@
 // frontend/src/App.js
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { ThemeProvider } from './context/ThemeContext.jsx';
 import { UserProvider, useUser } from './context/UserContext.jsx';
 import LegalChatAssistant from './components/assistant/LegalChatAssistant.jsx';
 import AdminOverview from './components/AdminOverview.jsx';
@@ -8,7 +9,6 @@ import Uploader from './components/Uploader.jsx';
 import CalendarSync from './components/CalendarSync.jsx';
 import UserProfile from './components/UserProfile.jsx';
 import PlatformAnalytics from './components/PlatformAnalytics.jsx';
-import DocumentOversight from './components/DocumentOversight.jsx';
 import PlatformSettings from './components/PlatformSettings.jsx';
 
 import Layout from './components/Layout.jsx';
@@ -51,7 +51,6 @@ function AppRoutes() {
                 <Route path="/admin" element={<AdminOverview />} />
                 <Route path="/admin/users" element={<UserManagement />} />
                 <Route path="/admin/analytics" element={<PlatformAnalytics />} />
-                <Route path="/admin/documents" element={<DocumentOversight />} />
                 <Route path="/admin/settings" element={<PlatformSettings />} />
 
                 <Route path="*" element={<Navigate to="/" replace />} />
@@ -66,11 +65,13 @@ function AppRoutes() {
 
 function App() {
   return (
-    <UserProvider>
-      <Router>
-        <AppRoutes />
-      </Router>
-    </UserProvider>
+    <ThemeProvider>
+      <UserProvider>
+        <Router>
+          <AppRoutes />
+        </Router>
+      </UserProvider>
+    </ThemeProvider>
   );
 }
 

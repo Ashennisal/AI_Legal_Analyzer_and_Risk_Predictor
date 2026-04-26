@@ -11,11 +11,20 @@ const Uploader = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null); // 'success' or 'error'
-  
+  /** Shown while waiting between 503 retries */
+  const [retryNote, setRetryNote] = useState(null);
+  const [uploadErrorMessage, setUploadErrorMessage] = useState('');
+
   /** Same shape as POST /api/documents/analyze JSON (persisted as analysis_json). */
   const [analyzeResult, setAnalyzeResult] = useState(null);
 
   const fileInputRef = useRef(null);
+
+  const ANALYZE_503_RETRY_MS = 120_000;
+  const RETRY_INITIAL_MS = 2000;
+  const RETRY_MAX_BACKOFF_MS = 15000;
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // Drag and Drop Event Handlers
   const handleDragOver = (e) => {
@@ -63,28 +72,68 @@ const Uploader = () => {
   // --- THE REAL API CONNECTION ---
   const handleUpload = async () => {
     if (!file) return;
-    
+
     setIsUploading(true);
     setUploadStatus(null);
+    setRetryNote(null);
+    setUploadErrorMessage('');
 
-    // Package the file to send to FastAPI
     const formData = new FormData();
     formData.append('file', file);
     formData.append('user_id', String(userId));
 
+    const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+    const started = Date.now();
+    let attempt = 0;
+
     try {
-      const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
-      const response = await axios.post(`${API_URL}/api/documents/analyze`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      // Retry on 503 (service unavailable / model overloaded) for up to ANALYZE_503_RETRY_MS
+      while (true) {
+        attempt += 1;
+        try {
+          const response = await axios.post(`${API_URL}/api/documents/analyze`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          setAnalyzeResult(response.data);
+          setUploadStatus('success');
+          return;
+        } catch (error) {
+          const status = error.response?.status;
+          const elapsed = Date.now() - started;
+          const remaining = ANALYZE_503_RETRY_MS - elapsed;
 
-      setAnalyzeResult(response.data);
-      setUploadStatus('success');
+          if (status !== 503 || remaining <= 0) {
+            throw error;
+          }
 
+          const backoff = Math.min(
+            RETRY_INITIAL_MS * 2 ** (attempt - 1),
+            RETRY_MAX_BACKOFF_MS,
+          );
+          const waitMs = Math.min(backoff, Math.max(0, remaining));
+          if (waitMs <= 0) {
+            throw error;
+          }
+
+          const secWait = Math.ceil(waitMs / 1000);
+          const secLeft = Math.ceil(remaining / 1000);
+          setRetryNote(
+            `Server temporarily unavailable (503). Retrying in ${secWait}s… (about ${secLeft}s left in retry window)`,
+          );
+          await sleep(waitMs);
+        }
+      }
     } catch (error) {
-      console.error("Upload error:", error);
+      console.error('Upload error:', error);
       setUploadStatus('error');
+      const detail = error?.response?.data?.detail;
+      setUploadErrorMessage(
+        typeof detail === 'string' && detail.trim()
+          ? detail
+          : 'Analysis failed. Check that the API is running and try again.',
+      );
     } finally {
+      setRetryNote(null);
       setIsUploading(false);
     }
   };
@@ -162,8 +211,15 @@ const Uploader = () => {
 
                 {uploadStatus === 'error' && (
                   <div className="flex items-center gap-2 text-red-600 bg-red-50 px-4 py-2 rounded-lg font-medium text-sm">
-                    <AlertCircle className="w-5 h-5" /> Analysis failed. Is your Python server running?
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    <span>{uploadErrorMessage || 'Analysis failed. Check that the API is running and try again.'}</span>
                   </div>
+                )}
+
+                {retryNote && (
+                  <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 px-4 py-2 rounded-lg max-w-md">
+                    {retryNote}
+                  </p>
                 )}
 
                 <div className="flex gap-4">
@@ -171,7 +227,13 @@ const Uploader = () => {
                     Cancel
                   </button>
                   <button onClick={handleUpload} disabled={isUploading} className="px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50">
-                    {isUploading ? <><Loader2 className="w-4 h-4 animate-spin" /> Analyzing Document...</> : 'Analyze Document'}
+                    {isUploading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" /> Analyzing Document…
+                      </>
+                    ) : (
+                      'Analyze Document'
+                    )}
                   </button>
                 </div>
               </div>
@@ -199,6 +261,7 @@ const Uploader = () => {
                 filename={analyzeResult.filename || file.name}
                 summaries={analyzeResult.summaries}
                 showDashboardLink
+                benchmark={analyzeResult.benchmark}
               />
             )}
           </div>

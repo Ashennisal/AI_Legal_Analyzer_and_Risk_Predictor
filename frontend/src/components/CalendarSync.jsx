@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -16,7 +16,8 @@ import {
 import axios from 'axios';
 import { useUser } from '../context/UserContext';
 
-const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+const GOOGLE_STATUS_POLL_MS = 3 * 1000;
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -55,28 +56,27 @@ function buildCalendarCells(year, monthIndex) {
   return cells;
 }
 
-
 const CalendarSync = () => {
   const { user } = useUser();
   const userId = user?.currentUser?.id;
 
   const [syncToast, setSyncToast] = useState({
-  show: false,
-  type: "success", // "success" | "error"
-  message: "",
-});
-
-const showSyncToast = (message, type = "success") => {
-  setSyncToast({
-    show: true,
-    type,
-    message,
+    show: false,
+    type: 'success', // "success" | "error"
+    message: '',
   });
 
-  setTimeout(() => {
-    setSyncToast((prev) => ({ ...prev, show: false }));
-  }, 3500);
-};
+  const showSyncToast = (message, type = 'success') => {
+    setSyncToast({
+      show: true,
+      type,
+      message,
+    });
+
+    setTimeout(() => {
+      setSyncToast((prev) => ({ ...prev, show: false }));
+    }, 3500);
+  };
 
   const [events, setEvents] = useState([]);
   const [warning, setWarning] = useState(null);
@@ -92,6 +92,7 @@ const showSyncToast = (message, type = "success") => {
   const [viewMonth, setViewMonth] = useState(now.getMonth());
 
   const [modal, setModal] = useState(null);
+  const googleStatusInFlight = useRef(false);
 
   const todayIso = toISODateLocal(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -115,6 +116,44 @@ const showSyncToast = (message, type = "success") => {
     load();
   }, [load]);
 
+  const refreshGoogleStatuses = useCallback(async () => {
+    if (userId == null || googleStatusInFlight.current) return;
+    const hasSyncedEvents = events.some(
+      (ev) => ev.status === 'synced' && ev.google_event_id
+    );
+    if (!hasSyncedEvents) return;
+
+    googleStatusInFlight.current = true;
+    try {
+      const { data } = await axios.post(
+        `${API}/api/events/refresh-google-status`,
+        {},
+        { params: { user_id: userId } }
+      );
+      const changedIds = data.changed_event_ids || [];
+      if (changedIds.length === 0) return;
+
+      const changedSet = new Set(changedIds);
+      setEvents((prev) =>
+        prev.map((ev) =>
+          changedSet.has(ev.event_id)
+            ? { ...ev, status: 'draft', google_event_id: null }
+            : ev
+        )
+      );
+    } catch (_e) {
+      // Keep polling quiet; a temporary Google/API error should not interrupt the page.
+    } finally {
+      googleStatusInFlight.current = false;
+    }
+  }, [events, userId]);
+
+  useEffect(() => {
+    const timer = setInterval(refreshGoogleStatuses, GOOGLE_STATUS_POLL_MS);
+    refreshGoogleStatuses();
+    return () => clearInterval(timer);
+  }, [refreshGoogleStatuses]);
+
   const eventsByDate = useMemo(() => {
     const map = {};
     for (const ev of events) {
@@ -128,23 +167,24 @@ const showSyncToast = (message, type = "success") => {
 
   const upcomingSyncedEvents = useMemo(() => {
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // start of today
+    today.setHours(0, 0, 0, 0);
 
     const nextWeek = new Date(today);
-    nextWeek.setDate(today.getDate() + 7); // up to 7 days from today
+    nextWeek.setDate(today.getDate() + 7);
 
-    return events.filter(ev => {
-      if (ev.status !== 'synced') return false;
-      if (!ev.event_date) return false;
-      const evDate = new Date(ev.event_date);
-      evDate.setHours(0, 0, 0, 0);
-      return evDate >= today && evDate <= nextWeek;
-    }).sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
+    return events
+      .filter((ev) => {
+        if (ev.status !== 'synced') return false;
+        if (!ev.event_date) return false;
+        const evDate = new Date(ev.event_date);
+        evDate.setHours(0, 0, 0, 0);
+        return evDate >= today && evDate <= nextWeek;
+      })
+      .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
   }, [events]);
 
-  // Only show deadlines from today onwards
   const futureEvents = useMemo(() => {
-    return events.filter(ev => {
+    return events.filter((ev) => {
       if (!ev.event_date) return false;
       return ev.event_date >= todayIso;
     });
@@ -180,7 +220,7 @@ const showSyncToast = (message, type = "success") => {
 
     setError(null);
     setModalError('');
-    setModalErrorFor(null);  
+    setModalErrorFor(null);
 
     setModal({
       selectedDate: isoDate,
@@ -234,26 +274,11 @@ const showSyncToast = (message, type = "success") => {
   const saveEditedEvent = async (item) => {
     if (!userId) return;
 
-  if (item.event_date < todayIso) {
-    setModalError('⛔ You cannot move a deadline to a past date.');
-    setModalErrorFor(item.event_id);
-    return;
-  }
-
-  const conflict = events.find(
-    (ev) =>
-      ev.event_id !== item.event_id &&
-      ev.event_date === item.event_date &&
-      ev.event_time === (item.event_time || '09:00')
-  );
-
-  if (conflict) {
-    showSyncToast(
-      `"${item.title}" could not sync.Another event already exists on this date and time`,
-      "error"
-    );
-    return;
-  }
+    if (item.event_date < todayIso) {
+      setModalError('⛔ You cannot move a deadline to a past date.');
+      setModalErrorFor(item.event_id);
+      return;
+    }
 
     setBusyId(`edit-${item.event_id}`);
     setError(null);
@@ -273,19 +298,7 @@ const showSyncToast = (message, type = "success") => {
 
       await load();
 
-      setModal((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          items: prev.items
-            .map((ev) =>
-              ev.event_id === item.event_id
-                ? { ...ev, event_date: item.event_date, event_time: item.event_time || '09:00' }
-                : ev
-            )
-            .filter((ev) => ev.event_date === prev.selectedDate),
-        };
-      });
+      setModal(null);
     } catch (e) {
       const d = e.response?.data?.detail;
       setModalError(typeof d === 'string' ? d : e.message || 'Could not update event');
@@ -373,8 +386,6 @@ const showSyncToast = (message, type = "success") => {
     }
   };
 
-
-
   const sync = async (eventId) => {
     const target = events.find((ev) => ev.event_id === eventId);
 
@@ -384,13 +395,13 @@ const showSyncToast = (message, type = "success") => {
           ev.event_id !== eventId &&
           ev.status === 'synced' &&
           ev.event_date === target.event_date &&
-          ev.event_time === target.event_time
+          (ev.event_time || '09:00') === (target.event_time || '09:00')
       );
 
       if (conflict) {
         showSyncToast(
-          `"${target.title}" could not sync.Another event already exists on this date and time`,
-          "error"
+          `"${target.title}" could not sync. Another synced event already exists on this date and time.`,
+          'error'
         );
         return;
       }
@@ -409,14 +420,14 @@ const showSyncToast = (message, type = "success") => {
       await load();
 
       if (target) {
-        showSyncToast(`"${target.title}" synced to Google Calendar`, "success");
+        showSyncToast(`"${target.title}" synced to Google Calendar`, 'success');
       } else {
-        showSyncToast("Event synced to Google Calendar", "success");
+        showSyncToast('Event synced to Google Calendar', 'success');
       }
     } catch (e) {
       showSyncToast(
         e.response?.data?.detail || e.message || 'Sync failed',
-        "error"
+        'error'
       );
     } finally {
       setBusyId(null);
@@ -435,11 +446,11 @@ const showSyncToast = (message, type = "success") => {
       );
 
       await load();
-      showSyncToast("Deadline removed from Google Calendar", "success");
+      showSyncToast('Deadline removed from Google Calendar', 'success');
     } catch (e) {
       showSyncToast(
-        e.response?.data?.detail || e.message || "Unsync failed",
-        "error"
+        e.response?.data?.detail || e.message || 'Unsync failed',
+        'error'
       );
     } finally {
       setBusyId(null);
@@ -494,14 +505,26 @@ const showSyncToast = (message, type = "success") => {
             <h2 className="text-lg font-bold text-red-700">Upcoming Synced Deadlines (Next 7 Days)</h2>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {upcomingSyncedEvents.map(ev => (
-              <div key={ev.event_id} className="bg-white border border-blue-100 rounded-lg p-3 shadow-sm flex flex-col hover:border-blue-300 transition-colors">
-                <span className="font-bold text-slate-800 truncate" title={ev.title}>{ev.title}</span>
+            {upcomingSyncedEvents.map((ev) => (
+              <div
+                key={ev.event_id}
+                className="bg-white border border-blue-100 rounded-lg p-3 shadow-sm flex flex-col hover:border-blue-300 transition-colors"
+              >
+                <span className="font-bold text-slate-800 truncate" title={ev.title}>
+                  {ev.title}
+                </span>
                 <span className="text-sm font-medium text-blue-700 mt-2 flex items-center gap-1.5">
                   <CalendarIcon className="w-4 h-4 shrink-0" />
-                  {ev.event_date} {ev.event_time && <><Clock className="w-3.5 h-3.5 ml-1 shrink-0" /> {ev.event_time}</>}
+                  {ev.event_date}{' '}
+                  {ev.event_time && (
+                    <>
+                      <Clock className="w-3.5 h-3.5 ml-1 shrink-0" /> {ev.event_time}
+                    </>
+                  )}
                 </span>
-                <span className="text-[10px] uppercase font-bold text-blue-500 mt-1 tracking-wider">Synced to Google</span>
+                <span className="text-[10px] uppercase font-bold text-blue-500 mt-1 tracking-wider">
+                  Synced to Google
+                </span>
               </div>
             ))}
           </div>
@@ -556,12 +579,13 @@ const showSyncToast = (message, type = "success") => {
                   onClick={() => openDateModal(cell.iso)}
                   title={`View deadlines on ${cell.iso}`}
                   className={`aspect-square min-h-[2.5rem] rounded-lg border text-sm font-medium transition-colors flex flex-col items-center justify-start pt-1 px-0.5
-                      ${isPast
-                      ? 'border-gray-100 bg-slate-50/80 text-slate-600 hover:border-blue-200 hover:bg-blue-50/40'
-                      : isToday
-                        ? 'border-blue-500 bg-blue-50 text-blue-900'
-                        : 'border-gray-100 hover:border-blue-300 hover:bg-blue-50/50 text-slate-800'
-                    }`}
+                      ${
+                        isPast
+                          ? 'border-gray-100 bg-slate-50/80 text-slate-600 hover:border-blue-200 hover:bg-blue-50/40'
+                          : isToday
+                            ? 'border-blue-500 bg-blue-50 text-blue-900'
+                            : 'border-gray-100 hover:border-blue-300 hover:bg-blue-50/50 text-slate-800'
+                      }`}
                 >
                   <span>{cell.day}</span>
                   {dayEvents.length > 0 && (
@@ -572,7 +596,7 @@ const showSyncToast = (message, type = "success") => {
                 </button>
               );
             })}
-          </div>          
+          </div>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 min-h-[320px]">
@@ -580,7 +604,9 @@ const showSyncToast = (message, type = "success") => {
           {loading ? (
             <p className="text-gray-500 text-sm">Loading…</p>
           ) : futureEvents.length === 0 ? (
-            <p className="text-gray-500 text-sm">No upcoming deadlines. Add one from the calendar or analyze a document.</p>
+            <p className="text-gray-500 text-sm">
+              No upcoming deadlines. Add one from the calendar or analyze a document.
+            </p>
           ) : (
             <ul className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
               {futureEvents.map((ev) => (
@@ -592,13 +618,19 @@ const showSyncToast = (message, type = "success") => {
                     <p className="font-medium text-slate-900 truncate">{ev.title}</p>
                     <p className="text-xs text-gray-500 flex items-center gap-2 mt-1">
                       <span>
-                        {ev.event_date} {ev.event_time && <><Clock className="w-3 h-3 inline" /> {ev.event_time}</>}
+                        {ev.event_date}{' '}
+                        {ev.event_time && (
+                          <>
+                            <Clock className="w-3 h-3 inline" /> {ev.event_time}
+                          </>
+                        )}
                       </span>
                       <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${ev.status === 'synced'
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                          ev.status === 'synced'
                             ? 'bg-green-100 text-green-800'
                             : 'bg-gray-200 text-gray-700'
-                          }`}
+                        }`}
                       >
                         {ev.status || 'draft'}
                       </span>
@@ -658,19 +690,8 @@ const showSyncToast = (message, type = "success") => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
           <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto">
             <div className="flex justify-between items-start gap-3">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">
-                  Deadlines on {modal.selectedDate}
-                </h3>
-              </div>
-
-              {error && (
-                <div className="rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
-                  {error}
-                </div>
-              )}
-
-              <div className="flex items-center gap-2">
+              <h3 className="text-lg font-bold text-slate-900">Deadlines on {modal.selectedDate}</h3>
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() =>
@@ -698,6 +719,12 @@ const showSyncToast = (message, type = "success") => {
                 </button>
               </div>
             </div>
+
+            {error && (
+              <div className="rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
+                {error}
+              </div>
+            )}
 
             {modal.showAddForm && (
               <div className="border border-blue-200 rounded-xl p-4 bg-blue-50/50 space-y-4">
@@ -746,7 +773,8 @@ const showSyncToast = (message, type = "success") => {
                               showAddForm: false,
                               newItem: {
                                 title: 'New deadline',
-                                event_date: prev.selectedDate < todayIso ? todayIso : prev.selectedDate,
+                                event_date:
+                                  prev.selectedDate < todayIso ? todayIso : prev.selectedDate,
                                 event_time: '09:00',
                               },
                             }
@@ -786,9 +814,7 @@ const showSyncToast = (message, type = "success") => {
                         <p className="font-semibold text-slate-900">{item.title}</p>
 
                         {modalErrorFor === item.event_id && (
-                          <p className="mt-1 text-sm text-red-600">
-                            {modalError}
-                          </p>
+                          <p className="mt-1 text-sm text-red-600">{modalError}</p>
                         )}
 
                         <span
@@ -808,11 +834,9 @@ const showSyncToast = (message, type = "success") => {
                       <input
                         className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                         value={item.title}
-                        onChange={(e) =>
-                          updateModalEvent(item.event_id, 'title', e.target.value)
-                        }
+                        onChange={(e) => updateModalEvent(item.event_id, 'title', e.target.value)}
                       />
-                    </label>      
+                    </label>
 
                     <div className="grid sm:grid-cols-2 gap-4 mt-4">
                       <label className="block text-sm">
@@ -862,22 +886,19 @@ const showSyncToast = (message, type = "success") => {
       {syncToast.show && (
         <div
           className={`fixed top-5 right-5 z-[60] flex items-center gap-3 rounded-2xl px-6 py-4 shadow-2xl text-white min-w-[360px] max-w-[520px]
-            ${syncToast.type === "success" ? "bg-[#08142b]" : "bg-[#7f1d1d]"}`}
+            ${syncToast.type === 'success' ? 'bg-[#08142b]' : 'bg-[#7f1d1d]'}`}
         >
           <div className="shrink-0">
-            {syncToast.type === "success" ? (
+            {syncToast.type === 'success' ? (
               <CalendarIcon className="w-5 h-5" />
             ) : (
               <AlertCircle className="w-5 h-5" />
             )}
           </div>
 
-          <div className="text-sm font-medium leading-6">
-            {syncToast.message}
-          </div>
+          <div className="text-sm font-medium leading-6">{syncToast.message}</div>
         </div>
       )}
-
     </div>
   );
 };

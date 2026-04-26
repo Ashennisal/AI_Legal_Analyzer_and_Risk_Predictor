@@ -124,15 +124,19 @@ def extract_events_with_gemini(
     Returns:
       [{"title":"...", "date":"YYYY-MM-DD", "time":"HH:MM"}, ...]
     """
+    from gemini_fallback import normalize_model_id
+
+    model = normalize_model_id(model) or "gemini-2.5-flash"
+
     try:
         from google import genai
     except ImportError:
-        print("⚠ calendar: google-genai not installed; skipping calendar extraction.")
+        print("[WARN] calendar: google-genai not installed; skipping calendar extraction.")
         return []
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("⚠ calendar: GEMINI_API_KEY not set; skipping calendar extraction.")
+        print("[WARN] calendar: GEMINI_API_KEY not set; skipping calendar extraction.")
         return []
 
     # reduce tokens / quota usage
@@ -186,17 +190,17 @@ DOCUMENT:
 
         raw = _strip_json_fences(_response_text_safe(response))
         if not raw.strip():
-            print("⚠ calendar: empty model response; skipping calendar extraction.")
+            print("[WARN] calendar: empty model response; skipping calendar extraction.")
             return []
 
         try:
             data = json.loads(raw)
         except Exception:
-            print("⚠ calendar: model did not return valid JSON.")
+            print("[WARN] calendar: model did not return valid JSON.")
             print(f"   Raw (first 500 chars): {raw[:500]!r}")
             return []
     except Exception as e:
-        print(f"⚠ calendar extraction failed: {e}")
+        print(f"[WARN] calendar extraction failed: {e}")
         return []
 
     # Support both shapes

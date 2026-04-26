@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import axios from 'axios';
 import DocumentAnalysisModal from './DocumentAnalysisModal';
 
-const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
 function riskToColor(level) {
   if (level === 'High') return 'text-red-600 bg-red-50 border-red-100';
@@ -144,25 +144,35 @@ const Dashboard = () => {
             <div className="p-8 text-center text-gray-500">Loading…</div>
           ) : recentActivity.length > 0 ? (
             recentActivity.map((doc) => (
-              <button
+              <div
                 key={doc.id}
-                type="button"
-                onClick={() => openDetail(doc)}
-                className="w-full p-4 px-6 flex items-center justify-between hover:bg-gray-50 transition-colors text-left"
+                className="w-full p-4 px-6 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors"
               >
-                <div className="flex items-center gap-4">
-                  <div className="p-2 bg-gray-100 rounded-lg text-gray-500">
-                    <FileText className="w-5 h-5" />
+                <button
+                  type="button"
+                  onClick={() => openDetail(doc)}
+                  className="flex-1 min-w-0 flex items-center justify-between text-left"
+                >
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="p-2 bg-gray-100 rounded-lg text-gray-500 shrink-0">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-800 truncate">{doc.name}</p>
+                      <p className="text-sm text-gray-500">{doc.date}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-semibold text-slate-800">{doc.name}</p>
-                    <p className="text-sm text-gray-500">{doc.date}</p>
-                  </div>
-                </div>
-                <span className={`px-3 py-1 text-xs font-bold border rounded-full ${doc.riskColor}`}>
-                  {doc.risk}
-                </span>
-              </button>
+                  <span className={`shrink-0 px-3 py-1 text-xs font-bold border rounded-full ${doc.riskColor}`}>
+                    {doc.risk}
+                  </span>
+                </button>
+                <Link
+                  to={`/assistant?documentId=${doc.id}`}
+                  className="shrink-0 text-xs font-semibold text-blue-600 hover:text-blue-800 whitespace-nowrap"
+                >
+                  Chat with AI
+                </Link>
+              </div>
             ))
           ) : (
             <div className="p-8 text-center text-gray-500 flex flex-col items-center justify-center gap-2">
