@@ -15,7 +15,7 @@ import {
 import axios from 'axios';
 import { useUser } from '../context/UserContext';
 
-const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 

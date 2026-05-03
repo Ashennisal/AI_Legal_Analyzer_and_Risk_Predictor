@@ -27,7 +27,7 @@ const Auth = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
-    const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
+    const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
     try {
       if (isLogin || isAdminMode) {

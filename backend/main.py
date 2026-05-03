@@ -16,6 +16,7 @@ from database import get_db_connection, close_db_connection
 from calendar_events_routes import router as calendar_events_router
 from calendar_events_db import try_save_extracted_events
 from chat_routes import router as chat_router
+from password_utils import hash_password, verify_password
 
 app = FastAPI(title="AI Legal Analyzer API")
 app.include_router(calendar_events_router, prefix="/api")
@@ -251,13 +252,12 @@ def get_all_documents(db = Depends(get_db)):
 def login_user(request: LoginRequest, db = Depends(get_db)):
     try:
         cursor = db.cursor(dictionary=True)
-        
-        # Query the database for the user by email and password
-        cursor.execute("SELECT * FROM users WHERE email = %s AND password = %s", (request.email, request.password))
+        # Query the database for the user by email
+        cursor.execute("SELECT * FROM users WHERE email = %s", (request.email,))
         user = cursor.fetchone()
         cursor.close()
 
-        if not user:
+        if not user or not verify_password(request.password, user['password']):
             print(f"[AUTH] Failed login attempt for {request.email}")
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
@@ -290,9 +290,12 @@ def register_user(request: RegisterRequest, db = Depends(get_db)):
     try:
         cursor = db.cursor()
         
-        # Insert the new user into the database with plain-text password
+        # Hash the password before storing
+        hashed_pw = hash_password(request.password)
+        
+        # Insert the new user into the database
         sql = "INSERT INTO users (name, email, password, role, status) VALUES (%s, %s, %s, 'User', 'Active')"
-        cursor.execute(sql, (request.name, request.email, request.password))
+        cursor.execute(sql, (request.name, request.email, hashed_pw))
         db.commit()
         new_id = cursor.lastrowid
         cursor.close()
@@ -340,11 +343,14 @@ def change_password(request: ChangePasswordRequest, db = Depends(get_db)):
             raise HTTPException(status_code=404, detail="User not found")
         
         # Verify old password
-        if request.old_password != user['password']:
+        if not verify_password(request.old_password, user['password']):
             raise HTTPException(status_code=401, detail="Current password is incorrect")
         
+        # Hash new password
+        hashed_new_pw = hash_password(request.new_password)
+        
         # Update with new password
-        cursor.execute("UPDATE users SET password = %s WHERE id = %s", (request.new_password, request.user_id))
+        cursor.execute("UPDATE users SET password = %s WHERE id = %s", (hashed_new_pw, request.user_id))
         db.commit()
         cursor.close()
         
