@@ -1,12 +1,3 @@
--- Chat assistant sessions + history (Gemini). Run once on legal_analyzer_db.
---
--- No FK to users(id): avoids MySQL error 3780 when user_id does not exactly match users.id
--- (INT vs INT UNSIGNED vs BIGINT). The API always filters by user_id.
---
--- If a failed run left no tables, you can ignore this. If something is half-created, run:
---   DROP TABLE IF EXISTS chat_history;
---   DROP TABLE IF EXISTS chat_sessions;
-
 CREATE TABLE IF NOT EXISTS chat_sessions (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
